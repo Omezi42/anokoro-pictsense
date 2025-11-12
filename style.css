@@ -1,0 +1,80 @@
+/* Tailwindでは難しいカスタムスタイル */
+
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* キャンバスのピクセルをくっきりさせる */
+#drawing-canvas {
+    image-rendering: -moz-crisp-edges;
+    image-rendering: -webkit-crisp-edges;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background-color: #FFFFFF; /* 消しゴムが機能するように背景色を白に固定 */
+}
+
+/* ツールバーのアクティブボタン */
+.tool-button.active {
+    background-color: theme('colors.blue.500');
+    color: theme('colors.white');
+}
+
+/* チャットメッセージのスタイル */
+.chat-message.system {
+    color: theme('colors.indigo.600');
+    font-style: italic;
+    font-weight: 500;
+}
+
+.chat-message.correct {
+    color: theme('colors.green.700');
+    font-weight: bold;
+    background-color: theme('colors.green.100');
+    border-radius: theme('borderRadius.md');
+    padding: 0.25rem 0.5rem;
+}
+
+.chat-message.log {
+    color: theme('colors.gray.500');
+    font-size: 0.875rem; /* text-sm */
+}
+
+/* 辞書検索結果のアクティブスタイル */
+.search-result-item:hover {
+    background-color: theme('colors.blue.100');
+    cursor: pointer;
+}
+
+
+/* 流れるコメントのアニメーション */
+@keyframes comment-flow {
+    from {
+        transform: translateX(100%);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(-110%); /* 画面外 + 自身の幅を考慮 */
+        opacity: 1;
+    }
+}
+
+.comment-flow-item {
+    position: absolute;
+    right: 0;
+    /* app.js側でアニメーション時間を設定するため、ここでの指定は削除 */
+    /* animation: comment-flow 10s linear forwards; */ 
+    
+    /* スタイル */
+    font-size: 2rem; /* text-3xl */
+    font-weight: bold;
+    color: white;
+    padding: 0.25rem 1rem;
+    white-space: nowrap; /* 折り返さない */
+    
+    /* 見やすくするためのテキストシャドウ */
+    text-shadow: 
+        0 0 5px #000, 
+        0 0 5px #000,
+        0 0 5px #000;
+}

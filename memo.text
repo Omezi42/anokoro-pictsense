@@ -1,0 +1,17 @@
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyAbb-B4IaknBvhJDs1Nw2RymsLSqTQSyn8",
+  authDomain: "anokoro-pictsense.firebaseapp.com",
+  projectId: "anokoro-pictsense",
+  storageBucket: "anokoro-pictsense.firebasestorage.app",
+  messagingSenderId: "769791445375",
+  appId: "1:769791445375:web:76047b7ec3871dbe27f24a"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
