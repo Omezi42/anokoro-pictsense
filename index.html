@@ -4,245 +4,234 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>あの頃のピクトセンス</title>
-    <!-- Tailwind CSS -->
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- カスタムスタイル -->
+    <!-- カスタムCSS -->
     <link rel="stylesheet" href="style.css">
-    <script>
-        // Tailwind CSS カスタム設定
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    },
-                },
-            },
-        };
-    </script>
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+        }
+    </style>
+    <!-- ES Module (Firebase / App Logic) -->
+    <script type="module" src="app.js"></script>
 </head>
-<body class="bg-gray-100 font-sans text-gray-800 antialiased">
+<body class="bg-gray-100 text-gray-800">
 
-    <!-- ローディングオーバーレイ -->
-    <div id="loading-overlay" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="text-white text-2xl animate-pulse">接続中...</div>
+    <!-- ローディングモーダル -->
+    <div id="loading-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+        <div class="text-white text-2xl animate-pulse">読み込み中...</div>
     </div>
 
     <!-- ロビー画面 -->
     <div id="lobby-screen" class="container mx-auto max-w-lg p-6 mt-10 bg-white rounded-lg shadow-xl">
         <h1 class="text-3xl font-bold text-center mb-6">あの頃のピクトセンス</h1>
-        <p class="text-gray-600 mb-6 text-center">「あの頃の自作TCG」のカードイラストで戦え！</p>
-        
-        <form id="join-room-form">
+        <p class="text-sm text-gray-600 mb-4">「あの頃の自作TCG」のカードイラストをお題にしたお絵描きクイズゲームです。</p>
+        <form id="join-form">
             <div class="mb-4">
                 <label for="username" class="block text-sm font-medium text-gray-700 mb-1">ユーザー名</label>
-                <input type="text" id="username" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder="例: 山本伊吹" required>
+                <input type="text" id="username" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="例: 山本伊吹" required>
             </div>
             <div class="mb-6">
                 <label for="room-id" class="block text-sm font-medium text-gray-700 mb-1">ルームID</label>
-                <input type="text" id="room-id" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder="例: ankr (半角英数)" required>
+                <input type="text" id="room-id" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="例: ankr (英数字)" required>
             </div>
 
-            <!-- カスタムルール (新規作成時のみ有効) -->
-            <fieldset class="mb-6 border rounded-lg p-4">
-                <legend class="text-lg font-medium text-gray-900 px-2">カスタムルール</legend>
-                <p class="text-xs text-gray-500 mb-3">※ルームが既にある場合、そのルームの設定が優先されます。</p>
+            <fieldset class="mb-6 border-t pt-4">
+                <legend class="text-lg font-medium text-gray-900 mb-2">カスタムルール</legend>
+                <p class="text-sm text-gray-500 mb-3">（ルーム作成時のみ適用されます）</p>
                 <div class="space-y-3">
                     <div class="relative flex items-start">
                         <div class="flex items-center h-5">
-                            <input id="rule-search" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <input id="rule-dictionary-search" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
                         </div>
                         <div class="ml-3 text-sm">
-                            <label for="rule-search" class="font-medium text-gray-700">辞書検索を有効にする</label>
+                            <label for="rule-dictionary-search" class="font-medium text-gray-700">辞書検索を許可する</label>
+                            <p class="text-gray-500">回答者がお題の辞書を検索できます。</p>
                         </div>
                     </div>
                     <div class="relative flex items-start">
                         <div class="flex items-center h-5">
-                            <input id="rule-show-illust-before" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <input id="rule-show-image-before" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
                         </div>
                         <div class="ml-3 text-sm">
-                            <label for="rule-show-illust-before" class="font-medium text-gray-700">描画前にイラストを表示 (出題者)</label>
+                            <label for="rule-show-image-before" class="font-medium text-gray-700">描画前にイラスト表示 (出題者)</label>
+                            <p class="text-gray-500">ターン開始時、出題者にお題のカード画像を表示します。</p>
                         </div>
                     </div>
                     <div class="relative flex items-start">
                         <div class="flex items-center h-5">
-                            <input id="rule-show-illust-after" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <input id="rule-show-image-after" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" checked>
                         </div>
                         <div class="ml-3 text-sm">
-                            <label for="rule-show-illust-after" class="font-medium text-gray-700">結果発表時にイラストを表示 (全員)</label>
+                            <label for="rule-show-image-after" class="font-medium text-gray-700">結果発表時にイラスト表示 (全員)</label>
+                            <p class="text-gray-500">正解が出た後、全員にお題のカード画像を表示します。</p>
                         </div>
                     </div>
                     <div class="relative flex items-start">
                         <div class="flex items-center h-5">
-                            <input id="rule-comment-flow" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <input id="rule-flowing-comments" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" checked>
                         </div>
                         <div class="ml-3 text-sm">
-                            <label for="rule-comment-flow" class="font-medium text-gray-700">流れるコメントを有効にする</label>
+                            <label for="rule-flowing-comments" class="font-medium text-gray-700">流れるコメント</label>
+                            <p class="text-gray-500">チャットや回答がキャンバス上を流れます。</p>
                         </div>
                     </div>
                     <div class="relative flex items-start">
                         <div class="flex items-center h-5">
-                            <input id="rule-hint" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <input id="rule-word-hint" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" checked>
                         </div>
                         <div class="ml-3 text-sm">
-                            <label for="rule-hint" class="font-medium text-gray-700">お題の文字数ヒントを表示</label>
+                            <label for="rule-word-hint" class="font-medium text-gray-700">お題ヒント (文字数)</label>
+                            <p class="text-gray-500">回答者にお題の文字数を表示します。</p>
                         </div>
                     </div>
                 </div>
             </fieldset>
 
-            <button type="submit" id="join-room-button" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition duration-300 ease-in-out">
+            <button type="submit" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md font-semibold hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                 入室する
             </button>
         </form>
     </div>
 
     <!-- ゲーム画面 -->
-    <div id="game-screen" class="hidden h-screen max-h-screen w-full p-4 flex flex-col md:flex-row gap-4 overflow-y-auto">
-        
-        <!-- メインエリア (キャンバス + ツールバー) -->
-        <div class="flex-grow flex flex-col bg-white rounded-lg shadow-xl overflow-hidden flex-shrink-0"> <!-- ★ flex-shrink-0 を追加 -->
-            <!-- ヘッダー (お題・タイマー・ボタン) -->
-            <div class="flex flex-wrap items-center justify-between p-3 bg-gray-50 border-b">
+    <div id="game-screen" class="hidden">
+        <!-- ヘッダー -->
+        <header class="bg-white shadow-md p-2 sticky top-0 z-10">
+            <div class="container mx-auto max-w-6xl flex flex-wrap justify-between items-center">
                 <div class="flex items-center space-x-4">
-                    <button id="leave-room-button" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium py-2 px-4 rounded-md text-sm transition duration-200">
-                        退室
-                    </button>
-                    <button id="start-game-button" class="hidden bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-5 rounded-md text-sm transition duration-200">
-                        ゲーム開始
-                    </button>
-                    <button id="check-word-button" class="hidden bg-purple-500 hover:bg-purple-600 text-white font-medium py-2 px-4 rounded-md text-sm transition duration-200">
-                        お題確認
-                    </button>
-                    <div id="game-state-display" class="text-lg font-semibold text-gray-700">待機中...</div>
+                    <h1 class="text-xl font-bold">ルームID: <span id="room-id-display" class="text-indigo-600"></span></h1>
+                    <button id="leave-room-btn" class="text-sm bg-red-500 text-white px-3 py-1 rounded-md hover:bg-red-600">退室</button>
+                    <button id="game-start-btn" class="hidden bg-green-500 text-white px-4 py-1 rounded-md font-semibold hover:bg-green-600">ゲーム開始</button>
                 </div>
+                <!-- ステータスバー（お題表示） -->
+                <div id="status-bar" class="w-full md:w-auto mt-2 md:mt-0 bg-gray-100 p-2 rounded-md text-center">
+                    <span class="font-semibold">お題: </span>
+                    <span id="current-word-display" class="text-lg font-bold text-gray-800">待機中...</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="container mx-auto max-w-6xl p-4 mt-4">
+            <div class="flex flex-col lg:flex-row gap-4">
                 
-                <!-- お題ヒント -->
-                <div id="word-hint-container" class="flex-grow text-center min-w-[200px] my-2 md:my-0">
-                    <div id="word-hint" class="text-2xl md:text-3xl font-bold text-gray-800 tracking-widest bg-gray-200 rounded-md p-2 inline-block blur-sm select-none">
-                        お題
+                <!-- メイン描画エリア -->
+                <div class="flex-grow lg:w-2/3">
+                    <!-- キャンバスコンテナ (アスペクト比 16:9) -->
+                    <div id="canvas-container" class="relative w-full max-w-full bg-white rounded-lg shadow-lg overflow-hidden">
+                        <!-- 流れるコメント用コンテナ -->
+                        <div id="comment-flow-container" class="absolute inset-0 z-10 pointer-events-none overflow-hidden">
+                            <!-- コメントはJSで追加 -->
+                        </div>
+                        <!-- 描画キャンバス -->
+                        <canvas id="drawing-canvas" width="800" height="450">
+                            お使いのブラウザはCanvasをサポートしていません。
+                        </canvas>
                     </div>
-                    <div id="word-hint-text" class="hidden text-2xl md:text-3xl font-bold text-gray-800 tracking-widest p-2 inline-block">
-                        〇〇〇
+
+                    <!-- 描画ツールバー (出題者のみ表示) -->
+                    <div id="drawing-toolbar" class="hidden bg-gray-100 p-3 mt-4 rounded-lg shadow-md space-y-3">
+                        <div class="flex flex-wrap items-center gap-3">
+                            <!-- 色ピッカー -->
+                            <label for="color-picker" class="text-sm font-medium">色:</label>
+                            <input type="color" id="color-picker" value="#000000" class="h-8 w-10 border-none rounded-md cursor-pointer">
+                            
+                            <!-- クイックカラーパレット -->
+                            <div id="quick-color-palette" class="flex gap-1">
+                                <button class="quick-color w-6 h-6 rounded-full border-2 border-gray-400" style="background-color: #000000;" data-color="#000000"></button>
+                                <button class="quick-color w-6 h-6 rounded-full" style="background-color: #EF4444;" data-color="#EF4444"></button>
+                                <button class="quick-color w-6 h-6 rounded-full" style="background-color: #3B82F6;" data-color="#3B82F6"></button>
+                                <button class="quick-color w-6 h-6 rounded-full" style="background-color: #22C55E;" data-color="#22C55E"></button>
+                                <button class="quick-color w-6 h-6 rounded-full" style="background-color: #F97316;" data-color="#F97316"></button>
+                                <button class="quick-color w-6 h-6 rounded-full" style="background-color: #EC4899;" data-color="#EC4899"></button>
+                                <button class="quick-color w-6 h-6 rounded-full" style="background-color: #FFFFFF; border: 1px solid #ccc;" data-color="#FFFFFF"></button>
+                            </div>
+                            
+                            <!-- 消しゴムボタン -->
+                            <button id="eraser-btn" class="px-3 py-1 bg-white border border-gray-300 rounded-md text-sm hover:bg-gray-50">消しゴム</button>
+                        </div>
+                        
+                        <div class="flex flex-wrap items-center gap-3">
+                            <!-- 太さスライダー -->
+                            <label for="line-width-slider" class="text-sm font-medium">太さ:</label>
+                            <input type="range" id="line-width-slider" min="1" max="50" value="5" class="flex-grow max-w-xs cursor-pointer">
+                            <span id="line-width-display" class="text-sm w-8 text-right">5</span>
+                        </div>
+
+                        <!-- ★修正: 「お題確認」ボタンを追加 -->
+                        <div class="flex flex-wrap items-center gap-3 border-t pt-3">
+                            <button id="clear-canvas-btn" class="px-3 py-1 bg-yellow-400 text-gray-800 rounded-md text-sm font-medium hover:bg-yellow-500">全消し</button>
+                            <button id="pass-btn" class="px-3 py-1 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600">パス (お題変更)</button>
+                            <button id="check-word-btn" class="px-3 py-1 bg-gray-400 text-white rounded-md text-sm font-medium hover:bg-gray-500">お題確認</button>
+                        </div>
                     </div>
-                </div>
-                <div class="w-24"></div> <!-- スペーサー -->
-            </div>
 
-            <!-- ▼▼▼ 変更点 ▼▼▼ -->
-            <!-- キャンバスコンテナ (800x450 に固定) -->
-            <div id="canvas-container" class="relative bg-gray-200 overflow-hidden" style="width: 800px; height: 450px;">
-                <!-- canvas タグにも width と height を指定 -->
-                <canvas id="drawing-canvas" class="absolute top-0 left-0" width="800" height="450"></canvas>
-                <!-- 流れるコメント用オーバーレイ -->
-                <div id="comment-flow-overlay" class="absolute top-0 left-0 w-full h-full pointer-events-none overflow-hidden">
-                    <!-- コメントがここに追加されます -->
-                </div>
-            </div>
-            <!-- ▲▲▲ 変更点 ▲▲▲ -->
-
-            <!-- ツールバー (出題者のみ表示) -->
-            <div id="toolbar" class="hidden flex-wrap items-center justify-center gap-2 p-2 bg-gray-100 border-t">
-                <!-- ツール選択 -->
-                <div class="flex space-x-1 rounded-md bg-gray-300 p-1">
-                    <button id="pen-tool" class="tool-button active p-2 rounded-md transition-colors bg-white shadow">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L16.732 3.732z"></path></svg>
-                    </button>
-                    <button id="eraser-tool" class="tool-button p-2 rounded-md transition-colors">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.4 7.6l-5.6 5.6m5.6-5.6L13.8 2m5.6 5.6L18 13.2M3 21l6-6m-6 6l6.6-1.4M3 21l1.4-6.6m-1.4 6.6L9 15m10.4-7.4l-5.6 5.6m5.6-5.6l-5.6-5.6"></path></svg>
-                    </button>
-                </div>
-                
-                <!-- 色ピッカー -->
-                <input type="color" id="color-picker" value="#000000" class="w-10 h-10 border-none rounded-md cursor-pointer">
-                
-                <!-- カラーパレット -->
-                <div class="flex space-x-1 p-1">
-                    <button class="color-palette-button w-8 h-8 rounded-full border-4 border-gray-400" style="background-color: #000000;" data-color="#000000"></button>
-                    <button class="color-palette-button w-8 h-8 rounded-full border-2" style="background-color: #EF4444;" data-color="#EF4444"></button> <!-- red-500 -->
-                    <button class="color-palette-button w-8 h-8 rounded-full border-2" style="background-color: #3B82F6;" data-color="#3B82F6"></button> <!-- blue-500 -->
-                    <button class="color-palette-button w-8 h-8 rounded-full border-2" style="background-color: #22C55E;" data-color="#22C55E"></button> <!-- green-500 -->
-                    <button class="color-palette-button w-8 h-8 rounded-full border-2" style="background-color: #EAB308;" data-color="#EAB308"></button> <!-- yellow-500 -->
-                    <button class="color-palette-button w-8 h-8 rounded-full border-2" style="background-color: #FFFFFF;" data-color="#FFFFFF"></button>
-                </div>
-
-                <!-- 太さスライダー -->
-                <div class="flex items-center space-x-2">
-                    <span class="text-sm">太さ:</span>
-                    <input type="range" id="line-width-slider" min="1" max="50" value="5" class="w-32 cursor-pointer">
-                    <span id="line-width-display" class="text-sm w-6 text-right">5</span>
-                </div>
-                
-                <!-- アクションボタン -->
-                <div class="flex space-x-2">
-                    <button id="pass-button" class="bg-yellow-500 hover:bg-yellow-600 text-white font-medium py-2 px-3 rounded-md text-sm transition duration-200">
-                        パス
-                    </button>
-                    <button id="clear-canvas-button" class="bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-3 rounded-md text-sm transition duration-200">
-                        全消し
-                    </button>
-                </div>
-            </div>
-
-            <!-- flex-grow を持つ親要素 (縦方向の余白を埋める) -->
-            <div class="flex-grow"></div> 
-            
-        </div>
-
-        <!-- サイドバー (情報・チャット) -->
-        <div class="w-full md:w-80 lg:w-96 flex flex-col flex-shrink-0 bg-white rounded-lg shadow-xl overflow-hidden">
-            <!-- プレイヤーリスト -->
-            <div class="border-b p-3">
-                <h2 class="text-lg font-semibold mb-2">プレイヤー</h2>
-                <div id="player-list" class="space-y-2 max-h-40 overflow-y-auto">
-                    <!-- プレイヤー情報がここに追加されます -->
-                </div>
-            </div>
-
-            <!-- チャット・回答エリア -->
-            <div class="flex-grow flex flex-col overflow-hidden p-3">
-                <h2 class="text-lg font-semibold mb-2">チャット / 回答</h2>
-                <div id="chat-messages" class="flex-grow bg-gray-100 rounded-md p-2 overflow-y-auto mb-3 space-y-2">
-                    <!-- メッセージがここに追加されます -->
-                </div>
-                
-                <!-- 辞書検索 (カスタムルール) -->
-                <div id="dictionary-search-container" class="hidden mb-2">
-                    <input type="text" id="dictionary-search-input" placeholder="辞書検索..." class="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm text-sm">
-                    <div id="dictionary-search-results" class="max-h-24 overflow-y-auto border border-gray-300 rounded-md mt-1 bg-white text-sm">
-                        <!-- 検索結果がここに追加されます -->
+                    <!-- 辞書検索エリア (カスタムルール) -->
+                    <div id="dictionary-search-container" class="hidden bg-gray-100 p-3 mt-4 rounded-lg shadow-md">
+                        <label for="dictionary-search-input" class="text-sm font-medium">辞書検索:</label>
+                        <input type="text" id="dictionary-search-input" class="w-full px-2 py-1 border border-gray-300 rounded-md mt-1" placeholder="カード名の一部を入力...">
+                        <div id="dictionary-search-results" class="mt-2 max-h-32 overflow-y-auto bg-white border rounded-md">
+                            <!-- 検索結果がここに入る -->
+                        </div>
                     </div>
                 </div>
 
-                <!-- 回答フォーム -->
-                <form id="chat-form" class="flex gap-2">
-                    <input type="text" id="chat-input" class="flex-grow px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder="回答またはチャットを入力" required autocomplete="off">
-                    <button type="submit" class="flex-shrink-0 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md shadow transition duration-300">
-                        送信
-                    </button>
-                </form>
-            </div>
-        </div>
+                <!-- サイドバー (スコア＆チャット) -->
+                <aside class="lg:w-1/3 space-y-4">
+                    <!-- スコアボード -->
+                    <div class="bg-white p-4 rounded-lg shadow-lg">
+                        <h2 class="text-xl font-bold mb-3 border-b pb-2">スコアボード</h2>
+                        <div id="scoreboard-container" class="space-y-2 max-h-48 overflow-y-auto">
+                            <!-- スコアはJSで追加 -->
+                        </div>
+                    </div>
+                    
+                    <!-- チャット/回答エリア -->
+                    <div class="bg-white p-4 rounded-lg shadow-lg flex flex-col h-[400px]">
+                        <h2 class="text-xl font-bold mb-3 border-b pb-2">チャット & 回答</h2>
+                        <div id="messages-container" class="flex-grow overflow-y-auto mb-3 bg-gray-50 p-2 rounded-md">
+                            <!-- メッセージはJSで追加 -->
+                        </div>
+                        <form id="answer-form" class="flex gap-2">
+                            <input type="text" id="answer-input" class="flex-grow px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="回答またはチャットを入力..." required>
+                            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-md font-semibold hover:bg-indigo-700">送信</button>
+                        </form>
+                    </div>
+                </aside>
 
+            </div>
+        </main>
     </div>
 
-    <!-- イラスト表示モーダル -->
-    <div id="illust-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-40 p-4">
-        <div class="bg-white rounded-lg shadow-xl p-4 max-w-lg w-full relative">
-            <button id="close-illust-modal-button" class="absolute top-2 right-2 text-gray-500 hover:text-gray-800">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-            </button>
-            <h3 id="illust-modal-title" class="text-xl font-bold mb-4 text-center">お題のイラスト</h3>
-            <div class="flex justify-center items-center bg-gray-200 rounded-md min-h-[300px]">
-                <img id="illust-modal-image" src="" alt="お題のイラスト" class="max-w-full max-h-[60vh] object-contain">
+    <!-- 結果モーダル -->
+    <div id="result-modal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-40 hidden">
+        <div class="bg-white p-8 rounded-lg shadow-2xl text-center max-w-md w-full">
+            <h2 id="result-title" class="text-3xl font-bold mb-4 text-green-600">正解！</h2>
+            <p id="result-winner" class="text-lg mb-2"><strong>山本伊吹</strong> さんが正解しました！</p>
+            <p id="result-word" class="text-2xl font-semibold mb-4 text-indigo-700"></p>
+            <p id="result-points" class="text-xl mb-6">出題者と正解者に <strong>+80</strong> ポイント！</p>
+            <!-- お題イラスト表示エリア -->
+            <div id="result-image-container" class="mb-6 hidden">
+                <img id="result-image" src="" alt="お題のイラスト" class="max-w-xs mx-auto rounded-md shadow-md">
             </div>
-            <p id="illust-modal-word" class="text-center text-2xl font-bold mt-4"></p>
+            <p class="text-gray-500 animate-pulse">5秒後に次のターンが始まります...</p>
         </div>
     </div>
 
-
-    <!-- Firebase SDK (ES Modules) -->
-    <script type="module" src="app.js"></script>
+    <!-- お題イラスト確認モーダル (出題者用) -->
+    <div id="show-image-modal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-40 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-2xl text-center max-w-md w-full">
+            <h2 class="text-2xl font-bold mb-4">お題の確認</h2>
+            <p class="text-lg mb-4">お題は「<strong id="show-image-word" class="text-indigo-700"></strong>」です。</p>
+            <img id="show-image-img" src="" alt="お題のイラスト" class="max-w-xs mx-auto rounded-md shadow-md mb-6">
+            <button id="show-image-close-btn" class="bg-indigo-600 text-white px-6 py-2 rounded-md font-semibold hover:bg-indigo-700">閉じる</button> <!-- ★描画開始 -> 閉じる に変更 -->
+        </div>
+    </div>
 
 </body>
 </html>

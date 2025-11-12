@@ -1,80 +1,90 @@
-/* Tailwindでは難しいカスタムスタイル */
+/* * style.css
+ * Tailwind CSS では難しい、または頻繁に使うカスタムスタイルを定義します。
+ */
 
 body {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    /* スクロールバーがガタつくのを防ぐ */
+    overflow-y: scroll;
 }
 
-/* キャンバスのピクセルをくっきりさせる */
+/* * キャンバスのレスポンシブ対応
+ * index.html の <canvas> には width="800" height="450" を設定しています。
+ * CSS で width: 100%, height: auto を設定し、
+ * 親コンテナの #canvas-container でアスペクト比を維持します。
+ */
+#canvas-container {
+    /* アスペクト比 16:9 (450 / 800 = 0.5625) */
+    /* aspect-ratio プロパティが使えるならそれが一番良いが、古いブラウザも考慮 */
+    position: relative;
+    width: 100%;
+    max-width: 800px; /* キャンバスの最大幅 */
+    margin: 0 auto; /* 中央揃え */
+}
+
+@media (min-width: 1024px) {
+    /* LGサイズ以上では、flex-grow で親が伸縮するため max-width を解除 */
+    #canvas-container {
+        max-width: none;
+    }
+}
+
+/* * canvas-container の子要素として 16:9 の領域を確保 
+ * (padding-top を使うハック。ただし今回はcanvasに直接サイズ指定してるので不要かも)
+ * 代わりに、canvas 自体にスタイルを適用
+ */
 #drawing-canvas {
+    /* 親コンテナに合わせて伸縮し、アスペクト比を維持 */
+    width: 100%;
+    height: auto;
+    /* ピクセルがぼやけないようにする（場合による） */
     image-rendering: -moz-crisp-edges;
     image-rendering: -webkit-crisp-edges;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    background-color: #FFFFFF; /* 消しゴムが機能するように背景色を白に固定 */
 }
 
-/* ツールバーのアクティブボタン */
-.tool-button.active {
-    background-color: theme('colors.blue.500');
-    color: theme('colors.white');
-}
-
-/* チャットメッセージのスタイル */
-.chat-message.system {
-    color: theme('colors.indigo.600');
-    font-style: italic;
-    font-weight: 500;
-}
-
-.chat-message.correct {
-    color: theme('colors.green.700');
-    font-weight: bold;
-    background-color: theme('colors.green.100');
-    border-radius: theme('borderRadius.md');
-    padding: 0.25rem 0.5rem;
-}
-
-.chat-message.log {
-    color: theme('colors.gray.500');
-    font-size: 0.875rem; /* text-sm */
-}
-
-/* 辞書検索結果のアクティブスタイル */
-.search-result-item:hover {
-    background-color: theme('colors.blue.100');
-    cursor: pointer;
-}
-
-
-/* 流れるコメントのアニメーション */
-@keyframes comment-flow {
-    from {
-        transform: translateX(100%);
-        opacity: 1;
-    }
-    to {
-        transform: translateX(-110%); /* 画面外 + 自身の幅を考慮 */
-        opacity: 1;
-    }
-}
-
+/* * 流れるコメント
+ * #comment-flow-container はキャンバスに重ねた絶対配置
+ */
 .comment-flow-item {
     position: absolute;
     right: 0;
-    /* app.js側でアニメーション時間を設定するため、ここでの指定は削除 */
-    /* animation: comment-flow 10s linear forwards; */ 
-    
-    /* スタイル */
-    font-size: 2rem; /* text-3xl */
+    transform: translateX(100%);
+    white-space: nowrap;
+    font-size: 1.5rem; /* 24px */
     font-weight: bold;
     color: white;
-    padding: 0.25rem 1rem;
-    white-space: nowrap; /* 折り返さない */
-    
-    /* 見やすくするためのテキストシャドウ */
+    /* テキストに黒い縁取りをつけて読みやすくする */
     text-shadow: 
-        0 0 5px #000, 
-        0 0 5px #000,
-        0 0 5px #000;
+        -1px -1px 0 #000,  
+         1px -1px 0 #000,
+        -1px  1px 0 #000,
+         1px  1px 0 #000,
+        -2px  0   0 #000,
+         2px  0   0 #000,
+         0   -2px 0 #000,
+         0    2px 0 #000;
+    
+    /* アニメーション */
+    animation: comment-flow 8s linear forwards;
+    /* 他のコメントと重ならないように */
+    will-change: transform;
+}
+
+/* 流れるコメントのアニメーション定義 */
+@keyframes comment-flow {
+    from {
+        transform: translateX(100%);
+        right: 0;
+    }
+    to {
+        /* 画面幅 + 自身の幅 だけ左に移動する (画面外まで流す) */
+        transform: translateX(calc(-100vw - 100%));
+        right: 0;
+    }
+}
+
+/* チャットエリアのスクロールを一番下に固定（JSでも制御） */
+#messages-container {
+    scroll-behavior: smooth;
 }
