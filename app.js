@@ -1,23 +1,11 @@
-// Firebase モジュールのインポート
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { 
-    getAuth, 
-    signInAnonymously, 
-    onAuthStateChanged 
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { 
-    getFirestore, 
-    doc, 
-    setDoc, 
-    getDoc, 
-    updateDoc, 
-    onSnapshot, 
-    Timestamp, 
-    arrayUnion,
-    writeBatch,
-    increment 
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    getFirestore, collection, doc, getDoc, setDoc, updateDoc, onSnapshot, 
+    arrayUnion, serverTimestamp, increment, deleteDoc 
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+// 1. Firebase Config (プレースホルダー)
 const firebaseConfig = {
   apiKey: "AIzaSyAbb-B4IaknBvhJDs1Nw2RymsLSqTQSyn8",
   authDomain: "anokoro-pictsense.firebaseapp.com",
@@ -27,1004 +15,767 @@ const firebaseConfig = {
   appId: "1:769791445375:web:76047b7ec3871dbe27f24a"
 };
 
+// アプリ初期化
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// 定数・状態変数
+const DICT_URL = "https://raw.githubusercontent.com/Omezi42/AnokoroImageFolder/main/all_card_names.txt";
+const IMAGE_BASE_URL = "https://raw.githubusercontent.com/Omezi42/AnokoroImageFolder/main/images/captured_cards/";
+const COLORS = [
+    '#000000', '#ffffff', '#808080', '#ff0000', '#ffa500', 
+    '#ffff00', '#008000', '#00ffff', '#0000ff', '#800080', 
+    '#ffc0cb', '#8b4513'
+];
+
 let currentUser = null;
 let currentRoomId = null;
-let roomUnsubscribe = null;
-let roomData = null;
-let dictionary = [];
-let dictionaryFetched = false;
-let isDrawer = false;
-let flowingCommentIds = new Set(); 
-let heartbeatInterval = null; // ★追加: 生存監視用タイマー
-
-let canvas, ctx;
+let currentRoomData = null;
+let unsubscribeRoom = null;
+let cardDictionary = [];
 let isDrawing = false;
-let lastX = 0, lastY = 0;
-let currentColor = '#000000';
-let currentLineWidth = 5;
-let strokeBuffer = [];
-let bufferTimer = null;
+let lastPoint = null;
+let strokeBuffer = []; 
+let sendTimer = null; 
+let drawerCheckTimer = null; // 出題者オフラインチェック用
 
-const loadingModal = document.getElementById('loading-modal');
-const lobbyScreen = document.getElementById('lobby-screen');
-const gameScreen = document.getElementById('game-screen');
-const joinForm = document.getElementById('join-form');
-const usernameInput = document.getElementById('username');
-const roomIdInput = document.getElementById('room-id');
-const roomIdDisplay = document.getElementById('room-id-display');
-const leaveRoomBtn = document.getElementById('leave-room-btn');
-const gameStartBtn = document.getElementById('game-start-btn');
-const statusBar = document.getElementById('status-bar');
-const currentWordDisplay = document.getElementById('current-word-display');
-const canvasContainer = document.getElementById('canvas-container');
-const commentFlowContainer = document.getElementById('comment-flow-container');
-const drawingToolbar = document.getElementById('drawing-toolbar');
-const colorPicker = document.getElementById('color-picker');
-const quickColorPalette = document.getElementById('quick-color-palette');
-const eraserBtn = document.getElementById('eraser-btn');
-const lineWidthSlider = document.getElementById('line-width-slider');
-const lineWidthDisplay = document.getElementById('line-width-display');
-const clearCanvasBtn = document.getElementById('clear-canvas-btn');
-const passBtn = document.getElementById('pass-btn');
-const checkWordBtn = document.getElementById('check-word-btn'); 
-const dictionarySearchContainer = document.getElementById('dictionary-search-container');
-const dictionarySearchInput = document.getElementById('dictionary-search-input');
-const dictionarySearchResults = document.getElementById('dictionary-search-results');
-const scoreboardContainer = document.getElementById('scoreboard-container');
-const messagesContainer = document.getElementById('messages-container');
-const answerForm = document.getElementById('answer-form');
-const answerInput = document.getElementById('answer-input');
+// ローカル設定
+let drawingColor = '#000000';
+let drawingSize = 3;
+let isEraser = false;
 
-const resultModal = document.getElementById('result-modal');
-const resultTitle = document.getElementById('result-title');
-const resultWinner = document.getElementById('result-winner');
-const resultWord = document.getElementById('result-word');
-const resultPoints = document.getElementById('result-points');
-const resultImageContainer = document.getElementById('result-image-container');
-const resultImage = document.getElementById('result-image');
-const showImageModal = document.getElementById('show-image-modal');
-const showImageWord = document.getElementById('show-image-word');
-const showImageImg = document.getElementById('show-image-img');
-const showImageCloseBtn = document.getElementById('show-image-close-btn');
+// DOM要素
+const canvas = document.getElementById('drawing-canvas');
+const ctx = canvas.getContext('2d');
+const chatHistory = document.getElementById('chat-history');
 
-const rulesCheckboxes = {
-    dictionarySearch: document.getElementById('rule-dictionary-search'),
-    showImageBefore: document.getElementById('rule-show-image-before'),
-    showImageAfter: document.getElementById('rule-show-image-after'),
-    flowingComments: document.getElementById('rule-flowing-comments'),
-    wordHint: document.getElementById('rule-word-hint'),
-};
+// -------------------------------------------------------
+// 1. 初期化と辞書ロード
+// -------------------------------------------------------
+async function init() {
+    try {
+        const res = await fetch(DICT_URL);
+        const text = await res.text();
+        cardDictionary = text.split(/\r\n|\n/).filter(line => line.trim() !== "");
+        console.log(`Dictionary loaded: ${cardDictionary.length} words.`);
+    } catch (e) {
+        console.error("Failed to load dictionary", e);
+        alert("辞書の読み込みに失敗しました。");
+    }
 
-window.onload = () => {
     signInAnonymously(auth).catch((error) => {
-        console.error("匿名認証に失敗しました:", error);
-        alert("認証に失敗しました。ページをリロードしてください。");
+        console.error("Auth failed", error);
+        alert("認証に失敗しました。");
     });
 
     onAuthStateChanged(auth, (user) => {
         if (user) {
             currentUser = user;
-            console.log("匿名認証成功:", user.uid);
-            loadingModal.classList.add('hidden');
-        } else {
-            console.log("ユーザーがサインアウトしました。");
-            loadingModal.classList.add('hidden');
+            console.log("Signed in as", user.uid);
         }
     });
 
+    setupUI();
     setupCanvas();
-    setupEventListeners();
-    fetchDictionary(); 
-};
-
-function setupCanvas() {
-    canvas = document.getElementById('drawing-canvas');
-    if (!canvas) {
-        console.error("キャンバス要素が見つかりません。");
-        return;
-    }
-    ctx = canvas.getContext('2d');
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
 }
 
-function setupEventListeners() {
-    joinForm.addEventListener('submit', handleJoinRoom);
-    leaveRoomBtn.addEventListener('click', handleLeaveRoom);
-    gameStartBtn.addEventListener('click', handleGameStart);
-    answerForm.addEventListener('submit', handleAnswerSubmit);
-
-    colorPicker.addEventListener('input', (e) => setCurrentColor(e.target.value));
-    quickColorPalette.addEventListener('click', (e) => {
-        if (e.target.tagName === 'BUTTON' && e.target.dataset.color) {
-            setCurrentColor(e.target.dataset.color);
-        }
-    });
-    eraserBtn.addEventListener('click', () => setCurrentColor('#FFFFFF'));
-    lineWidthSlider.addEventListener('input', (e) => {
-        currentLineWidth = e.target.value;
-        lineWidthDisplay.textContent = currentLineWidth;
-    });
-    clearCanvasBtn.addEventListener('click', handleClearCanvas);
-    passBtn.addEventListener('click', handlePass);
-    checkWordBtn.addEventListener('click', handleCheckWord); 
-
-    canvas.addEventListener('mousedown', startDrawing);
-    canvas.addEventListener('mousemove', draw);
-    canvas.addEventListener('mouseup', stopDrawing);
-    canvas.addEventListener('mouseout', stopDrawing);
-    canvas.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        startDrawing(e.touches[0]);
-    }, { passive: false });
-    canvas.addEventListener('touchmove', (e) => {
-        e.preventDefault();
-        draw(e.touches[0]);
-    }, { passive: false });
-    canvas.addEventListener('touchend', stopDrawing);
-
-    dictionarySearchInput.addEventListener('input', handleDictionarySearch);
-    dictionarySearchResults.addEventListener('click', (e) => {
-        if (e.target.tagName === 'DIV' && e.target.dataset.word) {
-            answerInput.value = e.target.dataset.word;
-            dictionarySearchResults.innerHTML = '';
-            dictionarySearchInput.value = '';
-        }
+// -------------------------------------------------------
+// 2. UIセットアップ
+// -------------------------------------------------------
+function setupUI() {
+    document.getElementById('join-btn').addEventListener('click', joinRoom);
+    document.getElementById('leave-btn').addEventListener('click', leaveRoom);
+    document.getElementById('start-game-btn').addEventListener('click', startGame);
+    document.getElementById('ranking-btn').addEventListener('click', showRanking);
+    document.getElementById('chat-send-btn').addEventListener('click', sendChat);
+    document.getElementById('chat-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendChat();
     });
 
-    showImageCloseBtn.addEventListener('click', () => {
-        showImageModal.classList.add('hidden');
+    const searchInput = document.getElementById('dict-search');
+    searchInput.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        const list = document.getElementById('search-results');
+        list.innerHTML = '';
+        if (!val) return;
+        
+        const hits = cardDictionary.filter(word => word.includes(val)).slice(0, 20);
+        hits.forEach(word => {
+            const div = document.createElement('div');
+            div.className = "p-2 hover:bg-blue-50 cursor-pointer text-xs border-b border-gray-200 text-gray-700";
+            div.textContent = word;
+            div.onclick = () => {
+                document.getElementById('chat-input').value = word;
+                document.getElementById('chat-input').focus();
+            };
+            list.appendChild(div);
+        });
     });
 
-    // ★追加: タブを閉じる/更新した際のイベント
-    window.addEventListener('beforeunload', (e) => {
-        // 退室処理を試みる（非同期のため確実ではないが、多くのケースで機能する）
-        handleLeaveRoom(true);
-        // 一部のブラウザで確認ダイアログを出す場合（今回は出さない）
-        // e.preventDefault();
-        // e.returnValue = ''; 
+    const palette = document.getElementById('color-palette');
+    COLORS.forEach(color => {
+        const btn = document.createElement('button');
+        btn.className = `w-6 h-6 rounded-full border border-gray-300 tool-btn`;
+        btn.style.backgroundColor = color;
+        btn.onclick = () => setColor(color, btn);
+        palette.appendChild(btn);
     });
+    setColor('#000000', palette.children[0]);
+
+    document.getElementById('color-picker').addEventListener('change', (e) => setColor(e.target.value));
+    document.getElementById('line-width').addEventListener('input', (e) => drawingSize = parseInt(e.target.value));
+    
+    document.getElementById('eraser-btn').addEventListener('click', () => {
+        isEraser = true;
+        updateToolStyles();
+    });
+    
+    document.getElementById('clear-btn').addEventListener('click', clearCanvasRemotely);
+    document.getElementById('pass-btn').addEventListener('click', passTurn);
+    document.getElementById('show-ref-btn').addEventListener('click', () => showImageModal(currentRoomData.currentWord, 'check'));
 }
 
-async function handleJoinRoom(e) {
-    e.preventDefault();
-    if (!currentUser) {
-        alert("認証情報がありません。ページをリロードしてください。");
-        return;
-    }
+function setColor(color, btnElement = null) {
+    isEraser = false;
+    drawingColor = color;
+    document.querySelectorAll('#color-palette .tool-btn').forEach(b => b.classList.remove('active'));
+    if (btnElement) btnElement.classList.add('active');
+    document.getElementById('color-picker').value = color;
+    updateToolStyles();
+}
 
-    const username = usernameInput.value.trim();
-    const roomId = roomIdInput.value.trim();
-
-    if (!username || !roomId) {
-        alert("ユーザー名とルームIDを入力してください。");
-        return;
+function updateToolStyles() {
+    const eraserBtn = document.getElementById('eraser-btn');
+    if (isEraser) {
+        eraserBtn.classList.add('bg-yellow-100', 'border-yellow-400', 'text-yellow-700');
+        eraserBtn.classList.remove('bg-gray-100', 'border-gray-300', 'text-gray-700');
+    } else {
+        eraserBtn.classList.remove('bg-yellow-100', 'border-yellow-400', 'text-yellow-700');
+        eraserBtn.classList.add('bg-gray-100', 'border-gray-300', 'text-gray-700');
     }
+}
+
+// -------------------------------------------------------
+// 3. ルームロジック (Firestore)
+// -------------------------------------------------------
+async function joinRoom() {
+    const username = document.getElementById('username-input').value.trim();
+    const roomId = document.getElementById('room-id-input').value.trim();
+    if (!username || !roomId) return alert("ユーザー名とルームIDを入力してください");
 
     currentRoomId = roomId;
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    
-    loadingModal.classList.remove('hidden');
+    const roomRef = doc(db, "pictsenseRooms", roomId);
 
-    try {
-        const roomDoc = await getDoc(roomDocRef);
-        const myPlayerData = {
-            username: username,
-            score: 0,
-            isOnline: true,
-            lastSeen: Timestamp.now() // ★追加: 生存確認用のタイムスタンプ
-        };
-
-        flowingCommentIds.clear();
-
-        if (roomDoc.exists()) {
-            const existingData = roomDoc.data();
-            
-            if (existingData.messages && Array.isArray(existingData.messages)) {
-                existingData.messages.forEach(msg => {
-                    if (msg.timestamp) {
-                        const msgId = msg.timestamp.toMillis() + (msg.text || ''); 
-                        flowingCommentIds.add(msgId);
-                    }
-                });
-            }
-
-            const onlinePlayers = Object.values(existingData.players || {}).filter(p => p.isOnline);
-
-            if (onlinePlayers.length === 0) {
-                console.log("オンラインのプレイヤーがいないため、ルームをリセットします。");
-                await resetRoom(roomDocRef, myPlayerData, username);
-                flowingCommentIds.clear();
-            } else {
-                await updateDoc(roomDocRef, {
-                    [`players.${currentUser.uid}`]: myPlayerData
-                });
-            }
-        } else {
-            console.log("新しいルームを作成します。");
-            await resetRoom(roomDocRef, myPlayerData, username);
-        }
-
-        setupRoomListener(roomDocRef);
-        startHeartbeat(); // ★追加: ハートビート開始
-
-        lobbyScreen.classList.add('hidden');
-        gameScreen.classList.remove('hidden');
-        roomIdDisplay.textContent = currentRoomId;
-        loadingModal.classList.add('hidden');
-
-    } catch (error) {
-        console.error("ルームへの参加に失敗しました:", error);
-        alert("ルームへの参加に失敗しました。");
-        loadingModal.classList.add('hidden');
-        currentRoomId = null;
-    }
-}
-
-async function resetRoom(roomDocRef, myPlayerData, username) {
-    const customRules = {};
-    for (const key in rulesCheckboxes) {
-        customRules[key] = rulesCheckboxes[key].checked;
-    }
-
-    const newRoomData = {
-        gameState: "waiting",
-        currentWord: "",
-        normalizedWord: "",
-        currentDrawerId: currentUser.uid,
-        drawingData: [],
-        messages: [],
-        players: {
-            [currentUser.uid]: myPlayerData
-        },
-        customRules: customRules,
-        turnStartTime: null,
-        lastWinner: null,
-        pointsAwarded: 0
+    const settings = {
+        enableSearch: document.getElementById('opt-search').checked,
+        showImageStart: document.getElementById('opt-show-start').checked,
+        showImageResult: document.getElementById('opt-show-result').checked,
+        flowComments: document.getElementById('opt-flow').checked,
+        showHints: document.getElementById('opt-hint').checked
     };
 
-    await setDoc(roomDocRef, newRoomData);
-}
-
-function setupRoomListener(roomDocRef) {
-    if (roomUnsubscribe) {
-        roomUnsubscribe();
-    }
-
-    roomUnsubscribe = onSnapshot(roomDocRef, (doc) => {
-        if (!doc.exists()) {
-            console.log("ルームが削除されました。");
-            handleLeaveRoom(true);
-            return;
-        }
-
-        const oldGameState = roomData ? roomData.gameState : null;
-        roomData = doc.data();
-        isDrawer = roomData.currentDrawerId === currentUser.uid;
-
-        console.log("ルームデータ更新:", roomData);
-
-        // ★追加: ゴーストユーザー（切断されたプレイヤー）のチェックと削除
-        checkAndRemoveGhosts(roomData);
-
-        updateScoreboard();
-        updateMessages(); 
-        handleNewMessagesFlow(roomData.messages || []);
-        updateUIForGameState(oldGameState);
-        redrawCanvas();
-
-    }, (error) => {
-        console.error("ルームの監視に失敗しました:", error);
-        alert("ルームとの接続が切れました。");
-        handleLeaveRoom(false);
-    });
-}
-
-async function handleLeaveRoom(silent = false) {
-    stopHeartbeat(); // ★追加: ハートビート停止
-
-    if (roomUnsubscribe) {
-        roomUnsubscribe();
-        roomUnsubscribe = null;
-    }
-
-    if (currentRoomId && currentUser) {
-        const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-        try {
-            await updateDoc(roomDocRef, {
-                [`players.${currentUser.uid}.isOnline`]: false
+    try {
+        const roomDoc = await getDoc(roomRef);
+        
+        if (!roomDoc.exists()) {
+            await setDoc(roomRef, {
+                status: "waiting",
+                players: [{
+                    uid: currentUser.uid,
+                    name: username,
+                    score: 0,
+                    isOnline: true,
+                    isCreator: true
+                }],
+                currentDrawerUid: null,
+                currentWord: null,
+                startTime: null,
+                canvasData: [],
+                messages: [],
+                settings: settings
             });
-            console.log("退室しました。");
-        } catch (error) {
-            console.error("退室処理に失敗しました:", error);
-        }
-    }
-
-    gameScreen.classList.add('hidden');
-    lobbyScreen.classList.remove('hidden');
-    
-    currentRoomId = null;
-    roomData = null;
-    isDrawer = false;
-
-    if (!silent) {
-        // alert("退室しました。");
-    }
-}
-
-// -------------------------------------------------------------------
-// ハートビート & ゴースト対策関数
-// -------------------------------------------------------------------
-
-// 1分ごとに lastSeen を更新する
-function startHeartbeat() {
-    stopHeartbeat(); // 二重起動防止
-    // 初回実行
-    sendHeartbeat();
-    // 定期実行
-    heartbeatInterval = setInterval(sendHeartbeat, 60000); 
-}
-
-function stopHeartbeat() {
-    if (heartbeatInterval) {
-        clearInterval(heartbeatInterval);
-        heartbeatInterval = null;
-    }
-}
-
-async function sendHeartbeat() {
-    if (!currentRoomId || !currentUser) return;
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    try {
-        // 自分の lastSeen を現在時刻で更新
-        await updateDoc(roomDocRef, {
-            [`players.${currentUser.uid}.lastSeen`]: Timestamp.now()
-        });
-    } catch (error) {
-        console.error("生存報告に失敗しました（無視可能）:", error);
-    }
-}
-
-// ゴースト（長期間応答がないプレイヤー）を検知して強制退室させる
-function checkAndRemoveGhosts(data) {
-    if (!data || !data.players || !currentUser) return;
-
-    const now = Timestamp.now().seconds;
-    const threshold = 180; // 180秒（3分）以上更新がなければオフラインとみなす
-
-    const onlinePlayers = Object.entries(data.players)
-        .filter(([, p]) => p.isOnline)
-        .map(([uid, p]) => ({ uid, ...p }));
-
-    if (onlinePlayers.length === 0) return;
-
-    // 競合を防ぐため、オンラインプレイヤーの中で「UIDが辞書順で最小」の人が代表して掃除を行う
-    onlinePlayers.sort((a, b) => a.uid.localeCompare(b.uid));
-    const cleaner = onlinePlayers[0];
-
-    // 自分が掃除役でなければ何もしない
-    if (cleaner.uid !== currentUser.uid) return;
-
-    // ゴースト認定
-    const ghosts = onlinePlayers.filter(p => {
-        if (!p.lastSeen) return false; // データがない場合は一旦スルー
-        const diff = now - p.lastSeen.seconds;
-        return diff > threshold;
-    });
-
-    if (ghosts.length > 0) {
-        console.log("ゴーストを検出しました:", ghosts.map(g => g.username));
-        removeGhosts(ghosts);
-    }
-}
-
-async function removeGhosts(ghosts) {
-    if (!currentRoomId) return;
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    const batch = writeBatch(db);
-
-    ghosts.forEach(g => {
-        batch.update(roomDocRef, {
-            [`players.${g.uid}.isOnline`]: false
-        });
-    });
-
-    try {
-        await batch.commit();
-        console.log(`${ghosts.length} 人のゴーストを退室させました。`);
-    } catch (error) {
-        console.error("ゴースト駆除に失敗:", error);
-    }
-}
-
-// -------------------------------------------------------------------
-
-function updateScoreboard() {
-    if (!roomData || !roomData.players) return;
-
-    const players = Object.entries(roomData.players)
-        .filter(([, playerData]) => playerData.isOnline) 
-        .sort(([, a], [, b]) => b.score - a.score); 
-
-    scoreboardContainer.innerHTML = '';
-    players.forEach(([uid, playerData]) => {
-        const isMe = uid === currentUser.uid;
-        const isCurrentDrawer = uid === roomData.currentDrawerId;
-
-        const playerEl = document.createElement('div');
-        playerEl.className = `flex justify-between items-center p-1 rounded-md ${isMe ? 'font-bold bg-blue-100' : ''}`;
-        
-        let drawerIcon = '';
-        if (isCurrentDrawer && (roomData.gameState === 'drawing' || roomData.gameState === 'waiting')) {
-            drawerIcon = ' ✏️';
-        }
-
-        playerEl.innerHTML = `
-            <span>${playerData.username}${drawerIcon}</span>
-            <span class="text-lg font-semibold">${playerData.score}</span>
-        `;
-        scoreboardContainer.appendChild(playerEl);
-    });
-}
-
-function updateMessages() {
-    if (!roomData || !roomData.messages) return;
-
-    messagesContainer.innerHTML = '';
-    const recentMessages = roomData.messages.length > 50 
-        ? roomData.messages.slice(-50) 
-        : roomData.messages;
-    roomData.messages.forEach(msg => {
-        appendMessage(msg);
-    });
-    // messagesContainer.scrollTop = messagesContainer.scrollHeight; // reverse-columnなのでスクロール制御不要または逆
-}
-
-function appendMessage(msg) {
-    const msgEl = document.createElement('div');
-    msgEl.classList.add('mb-1', 'text-sm', 'break-words');
-
-    const usernameSpan = document.createElement('span');
-    usernameSpan.className = 'font-semibold';
-    usernameSpan.textContent = msg.username ? `${msg.username}: ` : '';
-
-    const textSpan = document.createElement('span');
-    textSpan.textContent = msg.text;
-
-    if (msg.type === 'system' || msg.type === 'pass') {
-        msgEl.className = 'mb-1 text-sm italic text-gray-500';
-        textSpan.textContent = `📢 ${msg.text}`;
-    } else if (msg.type === 'correct') {
-        msgEl.className = 'mb-1 text-sm font-bold text-green-600';
-        textSpan.textContent = `🎉 ${msg.username} が正解しました！`;
-    }
-
-    if (msg.username) {
-        msgEl.appendChild(usernameSpan);
-    }
-    msgEl.appendChild(textSpan);
-    
-    messagesContainer.appendChild(msgEl);
-}
-
-function handleNewMessagesFlow(messages) {
-    if (!roomData || !roomData.customRules.flowingComments) return;
-
-    messages.forEach(msg => {
-        if (!msg.timestamp) return; 
-
-        const msgId = msg.timestamp.toMillis() + (msg.text || ''); 
-        
-        if (!flowingCommentIds.has(msgId)) {
-            createFlowingComment(msg);
-            flowingCommentIds.add(msgId);
-        }
-    });
-}
-
-function updateUIForGameState(oldGameState) {
-    if (!roomData) return;
-
-    const state = roomData.gameState;
-    
-    dictionarySearchContainer.classList.toggle('hidden', !roomData.customRules.dictionarySearch || isDrawer);
-
-    if (state === 'waiting') {
-        currentWordDisplay.textContent = '待機中...';
-        drawingToolbar.classList.add('hidden');
-        answerInput.placeholder = 'チャットを入力...';
-        answerInput.disabled = false;
-        resultModal.classList.add('hidden');
-        
-        const isFirstTurnEver = roomData.messages.length === 0;
-        gameStartBtn.classList.toggle('hidden', !isDrawer || !isFirstTurnEver);
-
-        if (oldGameState === 'result' && isDrawer) {
-            console.log("自動で次のターンを開始します。");
-            startNewTurn(); 
-        }
-
-    } else if (state === 'drawing') {
-        gameStartBtn.classList.add('hidden'); 
-        resultModal.classList.add('hidden');
-        
-        if (isDrawer) {
-            currentWordDisplay.textContent = roomData.currentWord || 'お題取得中...';
-            drawingToolbar.classList.remove('hidden');
-            answerInput.placeholder = '（出題者は回答できません）';
-            answerInput.disabled = true;
         } else {
-            if (roomData.customRules.wordHint && roomData.currentWord) {
-                currentWordDisplay.textContent = '〇'.repeat(roomData.currentWord.length);
+            const data = roomDoc.data();
+            const onlinePlayers = (data.players || []).filter(p => p.isOnline);
+            if (onlinePlayers.length === 0) {
+                await setDoc(roomRef, {
+                    status: "waiting",
+                    players: [{
+                        uid: currentUser.uid,
+                        name: username,
+                        score: 0,
+                        isOnline: true,
+                        isCreator: true
+                    }],
+                    currentDrawerUid: null,
+                    currentWord: null,
+                    startTime: null,
+                    canvasData: [],
+                    messages: [],
+                    settings: settings
+                });
             } else {
-                currentWordDisplay.textContent = 'お題は...';
-            }
-            drawingToolbar.classList.add('hidden');
-            answerInput.placeholder = '回答を入力...';
-            answerInput.disabled = false;
-        }
-
-        if (oldGameState !== 'drawing' && isDrawer && roomData.customRules.showImageBefore) {
-            showImageModalFunc(roomData.currentWord);
-        }
-
-    } else if (state === 'result') {
-        currentWordDisplay.textContent = `正解: ${roomData.currentWord}`;
-        drawingToolbar.classList.add('hidden');
-        answerInput.placeholder = 'チャットを入力...';
-        answerInput.disabled = false;
-        
-        if (oldGameState !== 'result') {
-            showResultModal();
-            
-            if (isDrawer) {
-                setTimeout(startNextTurn, 5000);
+                const existingPlayerIndex = data.players.findIndex(p => p.uid === currentUser.uid);
+                let newPlayers = [...data.players];
+                
+                if (existingPlayerIndex >= 0) {
+                    newPlayers[existingPlayerIndex].isOnline = true;
+                    newPlayers[existingPlayerIndex].name = username;
+                } else {
+                    newPlayers.push({
+                        uid: currentUser.uid,
+                        name: username,
+                        score: 0,
+                        isOnline: true,
+                        isCreator: false
+                    });
+                }
+                await updateDoc(roomRef, { players: newPlayers });
             }
         }
+
+        document.getElementById('lobby-screen').classList.add('hidden');
+        document.getElementById('game-screen').classList.remove('hidden');
+        document.getElementById('game-screen').classList.add('flex');
+        document.getElementById('disp-room-id').textContent = roomId;
+
+        if (settings.enableSearch) {
+            document.getElementById('search-column').classList.remove('hidden');
+        }
+
+        subscribeToRoom(roomId);
+
+    } catch (e) {
+        console.error(e);
+        alert("ルームへの参加に失敗しました: " + e.message);
     }
 }
 
-function showResultModal() {
-    if (!roomData || !roomData.lastWinner) return;
-    
-    resultWinner.textContent = `${roomData.lastWinner.username} さんが正解しました！`;
-    resultWord.textContent = `お題: ${roomData.currentWord}`;
-    resultPoints.textContent = `出題者と正解者に +${roomData.pointsAwarded} ポイント！`;
-    
-    if (roomData.customRules.showImageAfter) {
-        const imageUrl = getCardImageUrl(roomData.currentWord);
-        resultImage.src = imageUrl;
-        resultImage.onerror = () => { resultImage.src = 'https://placehold.co/300x420/eee/ccc?text=No+Image'; };
-        resultImageContainer.classList.remove('hidden');
-    } else {
-        resultImageContainer.classList.add('hidden');
-    }
+function subscribeToRoom(roomId) {
+    const roomRef = doc(db, "pictsenseRooms", roomId);
+    unsubscribeRoom = onSnapshot(roomRef, (snapshot) => {
+        if (!snapshot.exists()) return;
+        const data = snapshot.data();
+        const prevData = currentRoomData;
+        currentRoomData = data;
 
-    resultModal.classList.remove('hidden');
-}
-
-function showImageModalFunc(word) {
-    if (!word) return;
-    const imageUrl = getCardImageUrl(word);
-    showImageWord.textContent = word;
-    showImageImg.src = imageUrl;
-    showImageImg.onerror = () => { showImageImg.src = 'https://placehold.co/300x420/eee/ccc?text=No+Image'; };
-    showImageModal.classList.remove('hidden');
-}
-
-function createFlowingComment(msg) {
-    if (!roomData.customRules.flowingComments) return;
-
-    const item = document.createElement('div');
-    item.classList.add('comment-flow-item');
-    
-    let text = '';
-    if (msg.type === 'system' || msg.type === 'pass') {
-        text = `📢 ${msg.text}`;
-    } else if (msg.type === 'correct') {
-        text = `🎉 ${msg.username} が正解！`;
-    } else {
-        text = `${msg.username}: ${msg.text}`;
-    }
-    item.textContent = text;
-
-    item.style.top = `${Math.floor(Math.random() * 70) + 5}%`; 
-
-    commentFlowContainer.appendChild(item);
-
-    item.addEventListener('animationend', () => {
-        item.remove();
+        updateGameUI(data, prevData);
     });
 }
 
-async function fetchDictionary() {
-    if (dictionaryFetched) return;
-    
-    dictionaryFetched = true; 
+async function leaveRoom() {
+    if (!currentRoomId || !currentUser) return;
+    if (unsubscribeRoom) unsubscribeRoom();
 
-    const url = 'https://raw.githubusercontent.com/Omezi42/AnokoroImageFolder/main/all_card_names.txt';
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
     try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('辞書の読み込みに失敗しました。');
-        const text = await response.text();
-        dictionary = text.split('\n').filter(Boolean); 
-        console.log(`辞書を読み込みました: ${dictionary.length} 件`);
-    } catch (error) {
-        dictionaryFetched = false; 
-        console.error(error);
-        alert("お題辞書の読み込みに失敗しました。");
+        const docSnap = await getDoc(roomRef);
+        if (docSnap.exists()) {
+            const players = docSnap.data().players.map(p => {
+                if (p.uid === currentUser.uid) return { ...p, isOnline: false };
+                return p;
+            });
+            await updateDoc(roomRef, { players });
+        }
+    } catch(e) { console.error(e); }
+    location.reload();
+}
+
+// -------------------------------------------------------
+// 4. ゲーム進行・同期ロジック
+// -------------------------------------------------------
+function updateGameUI(data, prevData) {
+    const isMeDrawer = data.currentDrawerUid === currentUser.uid;
+    const me = data.players.find(p => p.uid === currentUser.uid);
+    const isCreator = me?.isCreator || false;
+
+    // ステータス表示など
+    const statusText = document.getElementById('game-status-text');
+    const startOverlay = document.getElementById('start-game-overlay');
+    const topicText = document.getElementById('topic-text');
+
+    if (data.status === 'waiting') {
+        statusText.textContent = "待機中";
+        statusText.className = "text-xs font-bold bg-gray-200 text-gray-600 px-2 py-1 rounded-full";
+        if (isCreator) {
+            startOverlay.classList.remove('hidden');
+        } else {
+            startOverlay.classList.add('hidden');
+        }
+        topicText.textContent = "WAITING";
+        document.getElementById('toolbar').classList.add('hidden');
+        document.getElementById('timer-display').classList.add('hidden');
+    } else if (data.status === 'playing') {
+        statusText.textContent = "出題中";
+        statusText.className = "text-xs font-bold bg-green-100 text-green-600 px-2 py-1 rounded-full animate-pulse";
+        startOverlay.classList.add('hidden');
+        document.getElementById('timer-display').classList.remove('hidden');
+        
+        if (data.startTime) {
+            const elapsed = Math.floor((Date.now() - data.startTime.toMillis()) / 1000);
+            const currentScore = Math.max(10, 100 - Math.floor(elapsed / 2));
+            document.getElementById('timer-display').textContent = currentScore;
+        }
+
+        if (isMeDrawer) {
+            topicText.textContent = data.currentWord || "???";
+            document.getElementById('toolbar').classList.remove('hidden');
+            // ターン開始直後の画像表示
+            if (data.settings.showImageStart && (!prevData || prevData.currentWord !== data.currentWord)) {
+                showImageModal(data.currentWord, 'start');
+            }
+        } else {
+            document.getElementById('toolbar').classList.add('hidden');
+            if (data.settings.showHints && data.currentWord) {
+                let hint = "";
+                for(let i=0; i<data.currentWord.length; i++) hint += "〇";
+                topicText.textContent = hint;
+            } else {
+                topicText.textContent = "？？？";
+            }
+        }
+
+        // 出題者のオフラインチェック
+        checkDrawerStatus(data);
+    }
+
+    // キャンバス同期
+    const prevLen = prevData ? prevData.canvasData.length : 0;
+    if (data.canvasData.length !== prevLen || !prevData) {
+        redrawCanvas(data.canvasData);
+    }
+
+    // チャット同期
+    const prevMsgLen = prevData ? prevData.messages.length : 0;
+    if (data.messages.length > prevMsgLen) {
+        const newMessages = data.messages.slice(prevMsgLen);
+        
+        // 初回ロード時(prevDataがない時)は流れるコメントを表示しない
+        // prevDataが存在する場合のみ(差分更新時のみ)流す
+        const shouldFlow = data.settings.flowComments && !!prevData;
+
+        newMessages.forEach(msg => addChatMessage(msg, shouldFlow));
+    }
+    
+    if (!document.getElementById('ranking-modal').classList.contains('hidden')) {
+        showRanking();
     }
 }
 
-async function handleGameStart() {
-    if (!isDrawer) return;
-    await startNewTurn();
-}
-
-async function startNewTurn() {
-    if (!isDrawer) return;
-    if (!dictionaryFetched) { 
-        await fetchDictionary(); 
-    }
-    if (dictionary.length === 0) {
-        alert("辞書が空か、読み込みに失敗しました。");
-        return;
-    }
-
-    const newWord = dictionary[Math.floor(Math.random() * dictionary.length)];
-    const normalizedWord = normalizeText(newWord);
-
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
+// 出題者がオフラインなら次へ飛ばすロジック
+function checkDrawerStatus(data) {
+    if (data.status !== 'playing') return;
+    const drawer = data.players.find(p => p.uid === data.currentDrawerUid);
     
-    try {
-        await updateDoc(roomDocRef, {
-            gameState: "drawing",
-            currentWord: newWord,
-            normalizedWord: normalizedWord,
-            drawingData: [], 
-            turnStartTime: Timestamp.now(), 
-            messages: arrayUnion({ 
-                type: "system",
-                text: `${roomData.players[currentUser.uid].username} が描いています。`,
-                timestamp: Timestamp.now()
+    // 自分がオンラインプレイヤーの先頭(管理者役)の場合のみ実行
+    const onlinePlayers = data.players.filter(p => p.isOnline);
+    const amILeader = onlinePlayers.length > 0 && onlinePlayers[0].uid === currentUser.uid;
+
+    if (drawer && !drawer.isOnline && amILeader) {
+        console.log("Drawer is offline. Force next turn.");
+        
+        // SYSTEMメッセージを出してから次へ
+        const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+        updateDoc(roomRef, {
+            messages: arrayUnion({
+                user: "SYSTEM",
+                text: "出題者がオフラインのため、順番をスキップします。",
+                timestamp: Date.now()
             })
+        }).then(() => {
+             nextTurn(data.players);
         });
-    } catch (error) {
-        console.error("ターン開始に失敗:", error);
     }
 }
 
-async function startNextTurn() {
-    if (!isDrawer || roomData.gameState !== 'result') return;
-
-    const nextDrawerId = findNextDrawer();
+async function startGame() {
+    if (!currentRoomId) return;
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    const word = getRandomWord();
     
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    try {
-        await updateDoc(roomDocRef, {
-            currentDrawerId: nextDrawerId,
-            gameState: "waiting", 
-            currentWord: "",
-            normalizedWord: "",
-            drawingData: [],
-            turnStartTime: null,
-            lastWinner: null,
-            pointsAwarded: 0
-        });
-
-        console.log(`次の出題者: ${nextDrawerId}`);
-
-    } catch (error) {
-        console.error("次のターンの準備に失敗:", error);
-    }
-}
-
-function findNextDrawer() {
-    const onlinePlayers = Object.entries(roomData.players)
-        .filter(([, p]) => p.isOnline)
-        .map(([uid]) => uid); 
-    
-    if (onlinePlayers.length === 0) {
-        return currentUser.uid; 
-    }
-    
-    const currentIndex = onlinePlayers.indexOf(roomData.currentDrawerId);
-    if (currentIndex === -1) {
-        return onlinePlayers[0];
-    }
-
-    const nextIndex = (currentIndex + 1) % onlinePlayers.length;
-    
-    return onlinePlayers[nextIndex];
-}
-
-async function handlePass() {
-    if (!isDrawer || roomData.gameState !== 'drawing') return;
-    
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    await updateDoc(roomDocRef, {
+    await updateDoc(roomRef, {
+        status: "playing",
+        currentDrawerUid: currentUser.uid,
+        currentWord: word,
+        startTime: serverTimestamp(),
+        canvasData: [],
         messages: arrayUnion({
-            type: "pass",
-            username: roomData.players[currentUser.uid].username,
-            text: "出題者がパスしました。お題を変更します。",
-            timestamp: Timestamp.now()
+            user: "SYSTEM",
+            text: "ゲームが開始されました！",
+            timestamp: Date.now()
+        })
+    });
+}
+
+async function passTurn() {
+    if (!currentRoomId) return;
+    const word = getRandomWord();
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    await updateDoc(roomRef, {
+        currentWord: word,
+        canvasData: [],
+        messages: arrayUnion({
+            user: "SYSTEM",
+            text: "お題がパスされました。",
+            timestamp: Date.now()
+        })
+    });
+}
+
+async function handleCorrectAnswer(winnerName) {
+    const now = Date.now();
+    const start = currentRoomData.startTime ? currentRoomData.startTime.toMillis() : now;
+    const elapsed = (now - start) / 1000;
+    const scoreToAdd = Math.max(10, 100 - Math.floor(elapsed / 2));
+
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    
+    let updatedPlayers = [...currentRoomData.players];
+    updatedPlayers = updatedPlayers.map(p => {
+        if (p.name === winnerName) return { ...p, score: p.score + scoreToAdd };
+        if (p.uid === currentRoomData.currentDrawerUid) return { ...p, score: p.score + scoreToAdd };
+        return p;
+    });
+
+    await updateDoc(roomRef, {
+        players: updatedPlayers,
+        messages: arrayUnion({
+            user: "SYSTEM",
+            text: `${winnerName}さんが正解しました！ (答え: ${currentRoomData.currentWord}) +${scoreToAdd}pt`,
+            timestamp: Date.now(),
+            isAnswer: true
         })
     });
 
-    await startNewTurn();
+    setTimeout(() => nextTurn(updatedPlayers), 5000);
 }
 
-async function handleClearCanvas() {
-    if (!isDrawer || roomData.gameState !== 'drawing') return;
-    
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    await updateDoc(roomDocRef, {
-        drawingData: [] 
+async function nextTurn(players) {
+    const onlinePlayers = players.filter(p => p.isOnline);
+    if (onlinePlayers.length === 0) return;
+
+    let currentIndex = onlinePlayers.findIndex(p => p.uid === currentRoomData.currentDrawerUid);
+    // 見つからない場合は -1 なので +1 して 0 (最初の人) になる
+    let nextIndex = (currentIndex + 1) % onlinePlayers.length;
+    const nextDrawer = onlinePlayers[nextIndex];
+    const word = getRandomWord();
+
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    await updateDoc(roomRef, {
+        currentDrawerUid: nextDrawer.uid,
+        currentWord: word,
+        startTime: serverTimestamp(),
+        canvasData: [],
+        messages: arrayUnion({
+            user: "SYSTEM",
+            text: `次は ${nextDrawer.name} さんの番です！`,
+            timestamp: Date.now()
+        })
     });
 }
 
-async function handleAnswerSubmit(e) {
-    e.preventDefault();
-    const text = answerInput.value.trim();
-    if (!text || !roomData) return;
+function getRandomWord() {
+    if (cardDictionary.length === 0) return "読み込み中";
+    return cardDictionary[Math.floor(Math.random() * cardDictionary.length)];
+}
 
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    const myUsername = roomData.players[currentUser.uid].username;
+// -------------------------------------------------------
+// 5. チャット機能
+// -------------------------------------------------------
+async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+    if (!currentRoomId) return;
 
-    let messageData = {
-        userId: currentUser.uid,
-        username: myUsername,
-        text: text,
-        timestamp: Timestamp.now()
-    };
-    
-    if (roomData.gameState === 'drawing' && !isDrawer) {
-        const normalizedAnswer = normalizeText(text);
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    const me = currentRoomData.players.find(p => p.uid === currentUser.uid);
+    const name = me ? me.name : "Unknown";
+
+    // 回答判定 (出題中は回答できない)
+    if (currentRoomData.status === 'playing' && 
+        currentRoomData.currentDrawerUid !== currentUser.uid && 
+        text === currentRoomData.currentWord) {
         
-        if (normalizedAnswer === roomData.normalizedWord) {
-            await handleCorrectAnswer(messageData);
-            answerInput.value = ''; 
-            return;
-        } else {
-            messageData.type = "answer";
+        // 正解処理: まず正解者の発言をチャットに流す（ネタバレOK、だって正解だから）
+        // isCorrect フラグをつけて特別表示する
+        input.value = '';
+        
+        await updateDoc(roomRef, {
+            messages: arrayUnion({
+                user: name,
+                text: text,
+                timestamp: Date.now(),
+                isCorrectComment: true // 正解コメントフラグ
+            })
+        });
+
+        // その後、点数計算とシステムアナウンス
+        handleCorrectAnswer(name);
+        return;
+    }
+
+    // 通常チャット
+    await updateDoc(roomRef, {
+        messages: arrayUnion({
+            user: name,
+            text: text,
+            timestamp: Date.now()
+        })
+    });
+    input.value = '';
+}
+
+function addChatMessage(msg, flowEnabled) {
+    const div = document.createElement('div');
+    div.className = "bg-gray-50 p-2 rounded text-sm border border-gray-200 text-gray-800 shadow-sm";
+    
+    if (msg.user === "SYSTEM") {
+        div.className = "bg-yellow-50 p-2 rounded text-sm border border-yellow-200 text-gray-800 shadow-sm";
+        div.innerHTML = `<span class="font-bold text-yellow-600">★SYSTEM</span>: ${msg.text}`;
+        
+        // システムメッセージも流す
+        if (flowEnabled) {
+            flowComment(msg.text, "SYSTEM", "system");
         }
+
+        // 正解時の画像表示トリガー
+        if (msg.isAnswer && currentRoomData.settings.showImageResult) {
+            showImageModal(currentRoomData.currentWord, 'result');
+        }
+
     } else {
-        messageData.type = "chat";
-    }
-
-    try {
-        await updateDoc(roomDocRef, {
-            messages: arrayUnion(messageData)
-        });
-        answerInput.value = ''; 
-    } catch (error) {
-        console.error("メッセージの送信に失敗:", error);
-    }
-}
-
-async function handleCorrectAnswer(correctMessage) {
-    if (roomData.gameState !== 'drawing') {
-        console.log("競合: すでに正解処理が実行されています。");
-        return;
-    }
-
-    const elapsedSeconds = Timestamp.now().seconds - roomData.turnStartTime.seconds;
-    const points = Math.max(20, 100 - Math.floor(elapsedSeconds / 2));
-
-    const winnerId = correctMessage.userId;
-    const drawerId = roomData.currentDrawerId;
-
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    
-    const systemCorrectMessage = {
-        type: "correct",
-        username: correctMessage.username,
-        text: `${correctMessage.username} が正解しました！`, 
-        timestamp: Timestamp.now()
-    };
-
-    try {
-        const batch = writeBatch(db);
-        
-        batch.update(roomDocRef, {
-            gameState: "result",
-            lastWinner: {
-                userId: winnerId,
-                username: correctMessage.username
-            },
-            pointsAwarded: points,
+        if (msg.isCorrectComment) {
+            // 正解コメントは特別色
+            div.className = "bg-green-50 p-2 rounded text-sm border border-green-200 text-gray-800 shadow-sm border-l-4 border-l-green-500";
+            div.innerHTML = `<span class="font-bold text-green-600">${msg.user}</span>: <span class="font-bold text-xl text-green-700">${msg.text}</span> <span class="text-xs bg-green-500 text-white px-1 rounded">正解！</span>`;
             
-            [`players.${winnerId}.score`]: increment(points),
-            [`players.${drawerId}.score`]: increment(points),
-
-            messages: arrayUnion(correctMessage, systemCorrectMessage)
-        });
-
-        await batch.commit();
-
-    } catch (error) {
-        console.error("正解処理に失敗:", error);
+            if (flowEnabled) {
+                flowComment(msg.text + " (正解!)", msg.user, "correct");
+            }
+        } else {
+            // 通常
+            div.innerHTML = `<span class="font-bold text-blue-600">${msg.user}</span>: ${msg.text}`;
+            if (flowEnabled) {
+                flowComment(msg.text, msg.user, "normal");
+            }
+        }
     }
+    
+    chatHistory.prepend(div);
 }
 
-function handleDictionarySearch() {
-    if (!dictionaryFetched || dictionary.length === 0) return;
+function flowComment(text, user, type = "normal") {
+    const container = document.getElementById('flowing-comments-layer');
+    const el = document.createElement('div');
     
-    const query = normalizeText(dictionarySearchInput.value.trim());
-    if (query.length < 1) {
-        dictionarySearchResults.innerHTML = '';
-        return;
+    // クラス分け
+    if (type === "system") {
+        el.className = "flowing-comment system";
+        el.textContent = text;
+    } else if (type === "correct") {
+        el.className = "flowing-comment correct";
+        el.textContent = `${user}: ${text}`;
+    } else {
+        el.className = "flowing-comment";
+        el.textContent = `${user}: ${text}`;
     }
+    
+    const top = Math.random() * 80; // 0-80%
+    el.style.top = `${top}%`;
+    
+    container.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+}
 
-    const results = dictionary.filter(word => {
-        return normalizeText(word).includes(query);
-    }).slice(0, 10); 
+// -------------------------------------------------------
+// 6. ランキング機能
+// -------------------------------------------------------
+function showRanking() {
+    if (!currentRoomData) return;
+    const modal = document.getElementById('ranking-modal');
+    const list = document.getElementById('ranking-list');
+    
+    const sortedPlayers = [...currentRoomData.players].sort((a, b) => b.score - a.score);
 
-    dictionarySearchResults.innerHTML = '';
-    if (results.length === 0) {
-        dictionarySearchResults.innerHTML = '<div class="p-2 text-gray-500">一致するカード名がありません</div>';
-        return;
-    }
+    list.innerHTML = '';
+    sortedPlayers.forEach((p, index) => {
+        const isMe = p.uid === currentUser.uid;
+        const row = document.createElement('div');
+        let rankColor = "text-gray-600";
+        let icon = "";
+        if (index === 0) { rankColor = "text-yellow-500"; icon = '<i class="fas fa-crown"></i>'; }
+        else if (index === 1) { rankColor = "text-gray-400"; }
+        else if (index === 2) { rankColor = "text-orange-400"; }
 
-    results.forEach(word => {
-        const item = document.createElement('div');
-        item.className = 'p-2 hover:bg-gray-100 cursor-pointer';
-        item.textContent = word;
-        item.dataset.word = word;
-        dictionarySearchResults.appendChild(item);
+        row.className = `flex justify-between items-center p-3 rounded border-b border-gray-100 ${isMe ? 'bg-blue-50 border-l-4 border-l-blue-400' : 'bg-white'}`;
+        row.innerHTML = `
+            <div class="flex items-center space-x-3">
+                <span class="font-bold text-lg w-8 text-center ${rankColor}">${index + 1}</span>
+                <div>
+                    <div class="font-bold text-gray-800 ${isMe ? 'text-blue-700' : ''}">
+                        ${icon} ${p.name} ${isMe ? '(あなた)' : ''}
+                    </div>
+                    <div class="text-xs text-gray-400">${p.isOnline ? 'オンライン' : 'オフライン'}</div>
+                </div>
+            </div>
+            <div class="font-mono font-bold text-xl text-blue-600">${p.score}pt</div>
+        `;
+        list.appendChild(row);
     });
+
+    modal.classList.remove('hidden');
+}
+
+// -------------------------------------------------------
+// 7. キャンバス機能
+// -------------------------------------------------------
+function setupCanvas() {
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseleave', stopDrawing);
+
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        startDrawing({ clientX: touch.clientX, clientY: touch.clientY });
+    });
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        draw({ clientX: touch.clientX, clientY: touch.clientY });
+    });
+    canvas.addEventListener('touchend', stopDrawing);
+}
+
+function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+    };
 }
 
 function startDrawing(e) {
-    if (!isDrawer || roomData.gameState !== 'drawing') return;
+    if (!currentRoomData) return;
+    if (currentRoomData.currentDrawerUid !== currentUser.uid) return;
+
     isDrawing = true;
-
-    const { x, y } = getMousePos(e);
-    lastX = x;
-    lastY = y;
-
-    strokeBuffer.push({
-        type: 'start',
-        x: x,
-        y: y,
-        color: currentColor,
-        width: currentLineWidth
-    });
-
-    drawOnCanvas({ type: 'start', x: x, y: y, color: currentColor, width: currentLineWidth });
-    drawOnCanvas({ type: 'draw', x: x, y: y });
+    lastPoint = getPos(e);
+    strokeBuffer = [lastPoint]; 
+    if (!sendTimer) {
+        sendTimer = setInterval(sendStrokeBuffer, 100);
+    }
 }
 
 function draw(e) {
     if (!isDrawing) return;
-
-    const { x, y } = getMousePos(e);
-    
-    strokeBuffer.push({
-        type: 'draw',
-        x: x,
-        y: y
-    });
-
-    drawOnCanvas({ type: 'start', x: lastX, y: lastY, color: currentColor, width: currentLineWidth });
-    drawOnCanvas({ type: 'draw', x: x, y: y });
-
-    lastX = x;
-    lastY = y;
-
-    if (!bufferTimer) {
-        bufferTimer = setTimeout(sendBuffer, 100); 
-    }
+    const newPoint = getPos(e);
+    drawSegment(lastPoint, newPoint, isEraser ? '#ffffff' : drawingColor, isEraser ? drawingSize * 2 : drawingSize);
+    strokeBuffer.push(newPoint);
+    lastPoint = newPoint;
 }
 
 function stopDrawing() {
     if (!isDrawing) return;
     isDrawing = false;
-    
-    if (bufferTimer) {
-        clearTimeout(bufferTimer);
-        bufferTimer = null;
+    sendStrokeBuffer();
+    if (sendTimer) {
+        clearInterval(sendTimer);
+        sendTimer = null;
     }
-    sendBuffer();
 }
 
-function getMousePos(e) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    
-    const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
-    const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+async function sendStrokeBuffer() {
+    if (strokeBuffer.length < 2) return;
+    if (!currentRoomId) return;
 
-    return {
-        x: (clientX - rect.left) * scaleX,
-        y: (clientY - rect.top) * scaleY
+    const pointsToSend = [...strokeBuffer];
+    strokeBuffer = [strokeBuffer[strokeBuffer.length - 1]]; 
+
+    const strokeData = {
+        color: isEraser ? '#ffffff' : drawingColor,
+        size: isEraser ? drawingSize * 2 : drawingSize,
+        points: pointsToSend
     };
+
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    await updateDoc(roomRef, {
+        canvasData: arrayUnion(strokeData)
+    }).catch(err => console.error("Draw sync error", err));
 }
 
-async function sendBuffer() {
-    if (bufferTimer) {
-        clearTimeout(bufferTimer);
-        bufferTimer = null;
-    }
-
-    if (strokeBuffer.length === 0 || !currentRoomId) return;
-
-    const bufferToSend = [...strokeBuffer]; 
-    strokeBuffer = []; 
-
-    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
-    try {
-        await updateDoc(roomDocRef, {
-            drawingData: arrayUnion(...bufferToSend)
-        });
-    } catch (error) {
-        console.error("描画データの送信に失敗:", error);
-        strokeBuffer = [...bufferToSend, ...strokeBuffer];
-    }
+async function clearCanvasRemotely() {
+    if (!currentRoomId) return;
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    await updateDoc(roomRef, { canvasData: [] });
 }
 
-function redrawCanvas() {
-    if (!ctx || !roomData || !roomData.drawingData) return;
-
+function redrawCanvas(canvasData) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    roomData.drawingData.forEach(stroke => {
-        drawOnCanvas(stroke);
-    });
-}
+    if (!canvasData) return;
 
-function drawOnCanvas(stroke) {
-    if (!ctx) return;
-    
-    if (stroke.type === 'start') {
+    canvasData.forEach(stroke => {
         ctx.beginPath();
-        ctx.moveTo(stroke.x, stroke.y);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         ctx.strokeStyle = stroke.color;
-        ctx.lineWidth = stroke.width;
-        ctx.lineTo(stroke.x, stroke.y);
-        ctx.stroke();
-    } else if (stroke.type === 'draw') {
-        ctx.lineTo(stroke.x, stroke.y);
-        ctx.stroke();
-    }
-}
+        ctx.lineWidth = stroke.size;
 
-function setCurrentColor(color) {
-    currentColor = color;
-    colorPicker.value = color; 
-
-    quickColorPalette.querySelectorAll('.quick-color').forEach(btn => {
-        btn.classList.toggle('border-gray-400', btn.dataset.color === color);
-        btn.classList.toggle('border-2', btn.dataset.color === color);
+        if (stroke.points.length > 0) {
+            ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+            for (let i = 1; i < stroke.points.length; i++) {
+                ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+            }
+        }
+        ctx.stroke();
     });
 }
 
-function handleCheckWord() {
-    if (!isDrawer || !roomData || !roomData.currentWord) return;
+function drawSegment(start, end, color, size) {
+    ctx.beginPath();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+}
+
+// -------------------------------------------------------
+// 8. その他ユーティリティ
+// -------------------------------------------------------
+function showImageModal(cardName, type = 'check') {
+    if (!cardName || cardName === "???") return;
+    const modal = document.getElementById('image-modal');
+    const titleEl = document.getElementById('modal-title');
+    const wordEl = document.getElementById('modal-word');
+    const imgEl = document.getElementById('modal-image');
+
+    // タイトルの設定
+    if (type === 'start') {
+        titleEl.textContent = "お題は";
+    } else if (type === 'result') {
+        titleEl.textContent = "正解は";
+    } else {
+        titleEl.textContent = "お題確認";
+    }
+
+    // お題と画像のセット
+    wordEl.textContent = cardName;
+    imgEl.src = IMAGE_BASE_URL + encodeURIComponent(cardName) + ".png";
+    imgEl.onerror = () => { imgEl.src = "https://via.placeholder.com/400x600?text=No+Image"; };
     
-    showImageModalFunc(roomData.currentWord);
+    // 表示
+    modal.classList.remove('hidden');
 }
 
-function normalizeText(text) {
-    if (!text) return "";
-    return text
-        .trim()
-        .toLowerCase()
-        .replace(/[\u30a1-\u30f6]/g, (match) => {
-            return String.fromCharCode(match.charCodeAt(0) - 0x60);
-        })
-        .replace(/[\s\u3000!-/:-@[-`{-~、。ー]/g, ''); 
-}
-
-function getCardImageUrl(cardName) {
-    if (!cardName) return '';
-    const encodedName = encodeURIComponent(cardName);
-    return `https://raw.githubusercontent.com/Omezi42/AnokoroImageFolder/main/images/captured_cards/${encodedName}.png`;
-}
+window.onload = init;

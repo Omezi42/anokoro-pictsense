@@ -1,103 +1,91 @@
-/* * style.css
- * Tailwind CSS では難しい、または頻繁に使うカスタムスタイルを定義します。
- */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-body {
-    /* スクロールバーがガタつくのを防ぐ */
-    overflow-y: scroll;
+/* スクロールバーのカスタマイズ (ライトテーマ用) */
+.scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+    background: #f3f4f6; /* gray-100 */
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #d1d5db; /* gray-300 */
+    border-radius: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af; /* gray-400 */
 }
 
-/* * キャンバスのレスポンシブ対応
- * index.html の <canvas> には width="800" height="450" を設定しています。
- * CSS で width: 100%, height: auto を設定し、
- * 親コンテナの #canvas-container でアスペクト比を維持します。
- */
-#canvas-container {
-    /* アスペクト比 16:9 (450 / 800 = 0.5625) */
-    /* aspect-ratio プロパティが使えるならそれが一番良いが、古いブラウザも考慮 */
-    position: relative;
-    width: 100%;
-    max-width: 800px; /* キャンバスの最大幅 */
-    margin: 0 auto; /* 中央揃え */
-    border: 3px solid black;
+/* ツールボタンのアクティブ状態 */
+.tool-btn.active {
+    border: 2px solid #d97706; /* yellow-600 (濃い黄色) */
+    transform: scale(1.1);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
 }
 
-@media (min-width: 1024px) {
-    /* LGサイズ以上では、flex-grow で親が伸縮するため max-width を解除 */
-    #canvas-container {
-        max-width: none;
-    }
-}
-
-/* * canvas-container の子要素として 16:9 の領域を確保 
- * (padding-top を使うハック。ただし今回はcanvasに直接サイズ指定してるので不要かも)
- * 代わりに、canvas 自体にスタイルを適用
- */
-#drawing-canvas {
-    /* 親コンテナに合わせて伸縮し、アスペクト比を維持 */
-    width: 100%;
-    height: auto;
-    /* ピクセルがぼやけないようにする（場合による） */
-    image-rendering: -moz-crisp-edges;
-    image-rendering: -webkit-crisp-edges;
-    image-rendering: pixelated;
-    image-rendering: crisp-edges;
-}
-
-/* * 流れるコメント
- * #comment-flow-container はキャンバスに重ねた絶対配置
- */
-.comment-flow-item {
-    position: absolute;
-    white-space: nowrap;
-    animation: flowAcross 10s linear forwards; /* 10秒かけて流れる */
-    color: white; /* コメントの色を白に変更 */
-    font-size: 1.5rem; /* フォントサイズを大きく */
-    font-weight: bold;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7); /* 読みやすく影を追加 */
-    pointer-events: none; /* クリック無効化 */
-    right: -100%; /* 初期位置を画面外右に */
-}
-
-@keyframes flowAcross {
-    0% { transform: translateX(0); opacity: 1; }
-    90% { opacity: 1; }
-    100% { transform: translateX(-150vw); opacity: 0; } /* 画面幅の1.5倍左に移動 */
-}
-
-/* 流れるコメントのアニメーション定義 */
-@keyframes comment-flow {
+/* 流れるコメントのアニメーション */
+@keyframes flowRightToLeft {
     from {
         transform: translateX(100%);
-        right: 0;
+        left: 100%;
     }
     to {
-        /* 画面幅 + 自身の幅 だけ左に移動する (画面外まで流す) */
-        transform: translateX(calc(-100vw - 100%));
-        right: 0;
+        transform: translateX(-100%);
+        left: -100%; /* 画面外へ */
     }
 }
 
-/* チャットエリアのスクロールを一番下に固定（JSでも制御） */
-#messages-container {
-    scroll-behavior: smooth;
-    display: flex;
-    flex-direction: column-reverse; /* 新しいコメントが上に来るように */
-    overflow-y: auto;
-    flex-grow: 1;
+.flowing-comment {
+    position: absolute;
+    white-space: nowrap;
+    font-weight: bold;
+    text-shadow: 
+        2px 2px 0 #000, 
+        -1px -1px 0 #000, 
+        1px -1px 0 #000, 
+        -1px 1px 0 #000, 
+        1px 1px 0 #000;
+    color: white;
+    pointer-events: none;
+    font-size: 1.5rem;
+    z-index: 100;
+    animation: flowRightToLeft 8s linear forwards;
+    will-change: transform, left;
 }
 
-/* スコアボードの高さ調整 */
-#scoreboard-container {
-    max-height: 150px; /* 少し短くする */
-    overflow-y: auto;
+/* システムメッセージ用の流れるコメント */
+.flowing-comment.system {
+    color: #fbbf24; /* yellow-400 */
+    font-size: 1.8rem;
+    z-index: 105; /* 通常コメントより手前 */
+    text-shadow: 
+        2px 2px 0 #451a03, /* 茶色っぽい縁取り */
+        -1px -1px 0 #451a03, 
+        1px -1px 0 #451a03, 
+        -1px 1px 0 #451a03, 
+        1px 1px 0 #451a03;
 }
 
-/* チャット/回答エリア全体の高さ調整 */
-#chat-answer-section {
-    /* ★修正: 親要素(aside)のflex配置に従う */
-    display: flex;
-    flex-direction: column;
-    height: 400px; /* デフォルトの高さ */
-    max-height: 50vh; /* 画面の半分以上は占有しないように制限 */
+/* 正解コメント用の流れるコメント */
+.flowing-comment.correct {
+    color: #4ade80; /* green-400 */
+    font-size: 2rem;
+    z-index: 110;
+    text-shadow: 
+        2px 2px 0 #064e3b, 
+        -1px -1px 0 #064e3b, 
+        1px -1px 0 #064e3b, 
+        -1px 1px 0 #064e3b, 
+        1px 1px 0 #064e3b;
+}
+
+/* レスポンシブ調整 */
+@media (max-width: 640px) {
+    #search-column {
+        display: none !important; 
+    }
+    #canvas-container {
+        background-color: #e5e7eb; /* gray-200 */
+    }
 }
