@@ -19,6 +19,7 @@ body {
     width: 100%;
     max-width: 800px; /* キャンバスの最大幅 */
     margin: 0 auto; /* 中央揃え */
+    border: 3px solid black;
 }
 
 @media (min-width: 1024px) {
@@ -48,27 +49,20 @@ body {
  */
 .comment-flow-item {
     position: absolute;
-    right: 0;
-    transform: translateX(100%);
     white-space: nowrap;
-    font-size: 1.5rem; /* 24px */
+    animation: flowAcross 10s linear forwards; /* 10秒かけて流れる */
+    color: white; /* コメントの色を白に変更 */
+    font-size: 1.5rem; /* フォントサイズを大きく */
     font-weight: bold;
-    color: white;
-    /* テキストに黒い縁取りをつけて読みやすくする */
-    text-shadow: 
-        -1px -1px 0 #000,  
-         1px -1px 0 #000,
-        -1px  1px 0 #000,
-         1px  1px 0 #000,
-        -2px  0   0 #000,
-         2px  0   0 #000,
-         0   -2px 0 #000,
-         0    2px 0 #000;
-    
-    /* アニメーション */
-    animation: comment-flow 8s linear forwards;
-    /* 他のコメントと重ならないように */
-    will-change: transform;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7); /* 読みやすく影を追加 */
+    pointer-events: none; /* クリック無効化 */
+    right: -100%; /* 初期位置を画面外右に */
+}
+
+@keyframes flowAcross {
+    0% { transform: translateX(0); opacity: 1; }
+    90% { opacity: 1; }
+    100% { transform: translateX(-150vw); opacity: 0; } /* 画面幅の1.5倍左に移動 */
 }
 
 /* 流れるコメントのアニメーション定義 */
@@ -87,4 +81,20 @@ body {
 /* チャットエリアのスクロールを一番下に固定（JSでも制御） */
 #messages-container {
     scroll-behavior: smooth;
+    display: flex;
+    flex-direction: column-reverse; /* 新しいコメントが上に来るように */
+    overflow-y: auto;
+    flex-grow: 1;
+}
+
+/* スコアボードの高さ調整 */
+#scoreboard-container {
+    max-height: 150px; /* 少し短くする */
+    overflow-y: auto;
+}
+
+/* チャット/回答エリア全体の高さ調整 */
+#chat-answer-section {
+    height: calc(100% - 20px); /* 親要素に依存する高さ */
+    min-height: 400px; /* 最低限の高さ確保 */
 }
