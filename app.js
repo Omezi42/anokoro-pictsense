@@ -39,6 +39,7 @@ let dictionary = [];
 let dictionaryFetched = false;
 let isDrawer = false;
 let flowingCommentIds = new Set(); 
+let heartbeatInterval = null; // ★追加: 生存監視用タイマー
 
 let canvas, ctx;
 let isDrawing = false;
@@ -117,7 +118,7 @@ window.onload = () => {
 
     setupCanvas();
     setupEventListeners();
-    fetchDictionary(); // ページ読み込み時に辞書を一度だけ読み込む
+    fetchDictionary(); 
 };
 
 function setupCanvas() {
@@ -129,7 +130,6 @@ function setupCanvas() {
     ctx = canvas.getContext('2d');
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    // Canvasは親要素の100%幅・高さになるようにCSSで調整
     canvas.style.width = '100%';
     canvas.style.height = '100%';
 }
@@ -181,6 +181,15 @@ function setupEventListeners() {
     showImageCloseBtn.addEventListener('click', () => {
         showImageModal.classList.add('hidden');
     });
+
+    // ★追加: タブを閉じる/更新した際のイベント
+    window.addEventListener('beforeunload', (e) => {
+        // 退室処理を試みる（非同期のため確実ではないが、多くのケースで機能する）
+        handleLeaveRoom(true);
+        // 一部のブラウザで確認ダイアログを出す場合（今回は出さない）
+        // e.preventDefault();
+        // e.returnValue = ''; 
+    });
 }
 
 async function handleJoinRoom(e) {
@@ -208,20 +217,18 @@ async function handleJoinRoom(e) {
         const myPlayerData = {
             username: username,
             score: 0,
-            isOnline: true
+            isOnline: true,
+            lastSeen: Timestamp.now() // ★追加: 生存確認用のタイムスタンプ
         };
 
-        // ★修正: 入室前にフローIDセットをクリア
         flowingCommentIds.clear();
 
         if (roomDoc.exists()) {
             const existingData = roomDoc.data();
             
-            // ★修正: 過去のメッセージをすべて「表示済み」としてマークし、入室時に流れないようにする
             if (existingData.messages && Array.isArray(existingData.messages)) {
                 existingData.messages.forEach(msg => {
                     if (msg.timestamp) {
-                        // 簡易ユニークID
                         const msgId = msg.timestamp.toMillis() + (msg.text || ''); 
                         flowingCommentIds.add(msgId);
                     }
@@ -233,7 +240,6 @@ async function handleJoinRoom(e) {
             if (onlinePlayers.length === 0) {
                 console.log("オンラインのプレイヤーがいないため、ルームをリセットします。");
                 await resetRoom(roomDocRef, myPlayerData, username);
-                // リセットした場合はメッセージも消えるのでIDセットもクリア
                 flowingCommentIds.clear();
             } else {
                 await updateDoc(roomDocRef, {
@@ -245,9 +251,8 @@ async function handleJoinRoom(e) {
             await resetRoom(roomDocRef, myPlayerData, username);
         }
 
-        // flowingCommentIds.clear(); // ★削除: ここでクリアすると過去ログ除外が無効になるため削除
-        
         setupRoomListener(roomDocRef);
+        startHeartbeat(); // ★追加: ハートビート開始
 
         lobbyScreen.classList.add('hidden');
         gameScreen.classList.remove('hidden');
@@ -305,6 +310,9 @@ function setupRoomListener(roomDocRef) {
 
         console.log("ルームデータ更新:", roomData);
 
+        // ★追加: ゴーストユーザー（切断されたプレイヤー）のチェックと削除
+        checkAndRemoveGhosts(roomData);
+
         updateScoreboard();
         updateMessages(); 
         handleNewMessagesFlow(roomData.messages || []);
@@ -319,6 +327,8 @@ function setupRoomListener(roomDocRef) {
 }
 
 async function handleLeaveRoom(silent = false) {
+    stopHeartbeat(); // ★追加: ハートビート停止
+
     if (roomUnsubscribe) {
         roomUnsubscribe();
         roomUnsubscribe = null;
@@ -347,6 +357,93 @@ async function handleLeaveRoom(silent = false) {
         // alert("退室しました。");
     }
 }
+
+// -------------------------------------------------------------------
+// ハートビート & ゴースト対策関数
+// -------------------------------------------------------------------
+
+// 1分ごとに lastSeen を更新する
+function startHeartbeat() {
+    stopHeartbeat(); // 二重起動防止
+    // 初回実行
+    sendHeartbeat();
+    // 定期実行
+    heartbeatInterval = setInterval(sendHeartbeat, 60000); 
+}
+
+function stopHeartbeat() {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+    }
+}
+
+async function sendHeartbeat() {
+    if (!currentRoomId || !currentUser) return;
+    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
+    try {
+        // 自分の lastSeen を現在時刻で更新
+        await updateDoc(roomDocRef, {
+            [`players.${currentUser.uid}.lastSeen`]: Timestamp.now()
+        });
+    } catch (error) {
+        console.error("生存報告に失敗しました（無視可能）:", error);
+    }
+}
+
+// ゴースト（長期間応答がないプレイヤー）を検知して強制退室させる
+function checkAndRemoveGhosts(data) {
+    if (!data || !data.players || !currentUser) return;
+
+    const now = Timestamp.now().seconds;
+    const threshold = 180; // 180秒（3分）以上更新がなければオフラインとみなす
+
+    const onlinePlayers = Object.entries(data.players)
+        .filter(([, p]) => p.isOnline)
+        .map(([uid, p]) => ({ uid, ...p }));
+
+    if (onlinePlayers.length === 0) return;
+
+    // 競合を防ぐため、オンラインプレイヤーの中で「UIDが辞書順で最小」の人が代表して掃除を行う
+    onlinePlayers.sort((a, b) => a.uid.localeCompare(b.uid));
+    const cleaner = onlinePlayers[0];
+
+    // 自分が掃除役でなければ何もしない
+    if (cleaner.uid !== currentUser.uid) return;
+
+    // ゴースト認定
+    const ghosts = onlinePlayers.filter(p => {
+        if (!p.lastSeen) return false; // データがない場合は一旦スルー
+        const diff = now - p.lastSeen.seconds;
+        return diff > threshold;
+    });
+
+    if (ghosts.length > 0) {
+        console.log("ゴーストを検出しました:", ghosts.map(g => g.username));
+        removeGhosts(ghosts);
+    }
+}
+
+async function removeGhosts(ghosts) {
+    if (!currentRoomId) return;
+    const roomDocRef = doc(db, "pictsenseRooms", currentRoomId);
+    const batch = writeBatch(db);
+
+    ghosts.forEach(g => {
+        batch.update(roomDocRef, {
+            [`players.${g.uid}.isOnline`]: false
+        });
+    });
+
+    try {
+        await batch.commit();
+        console.log(`${ghosts.length} 人のゴーストを退室させました。`);
+    } catch (error) {
+        console.error("ゴースト駆除に失敗:", error);
+    }
+}
+
+// -------------------------------------------------------------------
 
 function updateScoreboard() {
     if (!roomData || !roomData.players) return;
@@ -409,13 +506,6 @@ function appendMessage(msg) {
         msgEl.appendChild(usernameSpan);
     }
     msgEl.appendChild(textSpan);
-    
-    // flex-direction: column-reverse なので appendChild すると見た目上は「上」に追加される（HTML的には末尾）
-    // 新しいものが上に来るためには、HTML的には「末尾に追加」し、CSSで逆順表示しているならOK
-    // ただし、過去のログは古い順に配列に入っている。
-    // 配列[古い, ..., 新しい] -> appendChild -> HTML[古い, ..., 新しい]
-    // column-reverse -> 表示[新しい, ..., 古い]
-    // これで合っている。
     
     messagesContainer.appendChild(msgEl);
 }
