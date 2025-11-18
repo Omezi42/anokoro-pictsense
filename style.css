@@ -95,6 +95,9 @@ body {
 
 /* チャット/回答エリア全体の高さ調整 */
 #chat-answer-section {
-    height: calc(100% - 20px); /* 親要素に依存する高さ */
-    min-height: 400px; /* 最低限の高さ確保 */
+    /* ★修正: 親要素(aside)のflex配置に従う */
+    display: flex;
+    flex-direction: column;
+    height: 400px; /* デフォルトの高さ */
+    max-height: 50vh; /* 画面の半分以上は占有しないように制限 */
 }

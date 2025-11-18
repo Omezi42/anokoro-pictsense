@@ -477,6 +477,9 @@ function updateMessages() {
     if (!roomData || !roomData.messages) return;
 
     messagesContainer.innerHTML = '';
+    const recentMessages = roomData.messages.length > 50 
+        ? roomData.messages.slice(-50) 
+        : roomData.messages;
     roomData.messages.forEach(msg => {
         appendMessage(msg);
     });
