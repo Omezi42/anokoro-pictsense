@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebas
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { 
     getFirestore, collection, doc, getDoc, setDoc, updateDoc, onSnapshot, 
-    arrayUnion, serverTimestamp, increment, deleteDoc 
+    arrayUnion, serverTimestamp, increment, deleteDoc, runTransaction 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 // 1. Firebase Config (プレースホルダー)
@@ -38,7 +38,6 @@ let isDrawing = false;
 let lastPoint = null;
 let strokeBuffer = []; 
 let sendTimer = null; 
-let drawerCheckTimer = null; // 出題者オフラインチェック用
 
 // ローカル設定
 let drawingColor = '#000000';
@@ -350,8 +349,6 @@ function updateGameUI(data, prevData) {
     const prevMsgLen = prevData ? prevData.messages.length : 0;
     if (data.messages.length > prevMsgLen) {
         const newMessages = data.messages.slice(prevMsgLen);
-        
-        // 初回ロード時(prevDataがない時)は流れるコメントを表示しない
         // prevDataが存在する場合のみ(差分更新時のみ)流す
         const shouldFlow = data.settings.flowComments && !!prevData;
 
@@ -384,7 +381,7 @@ function checkDrawerStatus(data) {
                 timestamp: Date.now()
             })
         }).then(() => {
-             nextTurn(data.players);
+             nextTurn(); // 引数なしで呼べるように変更済み
         });
     }
 }
@@ -423,46 +420,79 @@ async function passTurn() {
     });
 }
 
-async function handleCorrectAnswer(winnerName) {
-    const now = Date.now();
-    const start = currentRoomData.startTime ? currentRoomData.startTime.toMillis() : now;
-    const elapsed = (now - start) / 1000;
-    const scoreToAdd = Math.max(10, 100 - Math.floor(elapsed / 2));
-
+// ★修正ポイント: トランザクションを使って排他制御を行う
+async function handleCorrectAnswer(winnerName, winnerUid) {
     const roomRef = doc(db, "pictsenseRooms", currentRoomId);
-    
-    let updatedPlayers = [...currentRoomData.players];
-    updatedPlayers = updatedPlayers.map(p => {
-        if (p.name === winnerName) return { ...p, score: p.score + scoreToAdd };
-        if (p.uid === currentRoomData.currentDrawerUid) return { ...p, score: p.score + scoreToAdd };
-        return p;
-    });
 
-    await updateDoc(roomRef, {
-        players: updatedPlayers,
-        messages: arrayUnion({
-            user: "SYSTEM",
-            text: `${winnerName}さんが正解しました！ (答え: ${currentRoomData.currentWord}) +${scoreToAdd}pt`,
-            timestamp: Date.now(),
-            isAnswer: true
-        })
-    });
+    try {
+        // トランザクション実行
+        await runTransaction(db, async (transaction) => {
+            const roomDoc = await transaction.get(roomRef);
+            if (!roomDoc.exists()) throw "Document does not exist!";
+            
+            const data = roomDoc.data();
+            
+            // ★重要: 既に誰かが正解して status が playing 以外になっていたら何もしない（早い者勝ち）
+            if (data.status !== 'playing') {
+                console.log("Already answered/processed by someone else.");
+                return; 
+            }
 
-    setTimeout(() => nextTurn(updatedPlayers), 5000);
+            // スコア計算
+            const now = Date.now();
+            const start = data.startTime ? data.startTime.toMillis() : now;
+            const elapsed = (now - start) / 1000;
+            const scoreToAdd = Math.max(10, 100 - Math.floor(elapsed / 2));
+
+            // プレイヤー更新
+            let updatedPlayers = [...data.players];
+            updatedPlayers = updatedPlayers.map(p => {
+                if (p.uid === winnerUid) return { ...p, score: p.score + scoreToAdd }; // 正解者
+                if (p.uid === data.currentDrawerUid) return { ...p, score: p.score + scoreToAdd }; // 出題者
+                return p;
+            });
+
+            // 書き込み (status を 'result' に変更してロックする)
+            transaction.update(roomRef, {
+                status: "result", // ★状態を変更してロック
+                players: updatedPlayers,
+                messages: arrayUnion({
+                    user: "SYSTEM",
+                    text: `${winnerName}さんが正解しました！ (答え: ${data.currentWord}) +${scoreToAdd}pt`,
+                    word: data.currentWord,
+                    timestamp: Date.now(),
+                    isAnswer: true
+                })
+            });
+        });
+
+        // トランザクションに成功した(=ステータスを更新した)クライアントだけが次へ進むタイマーをセット
+        setTimeout(() => nextTurn(), 5000);
+
+    } catch (e) {
+        console.log("Transaction skipped or failed: ", e);
+    }
 }
 
-async function nextTurn(players) {
-    const onlinePlayers = players.filter(p => p.isOnline);
+async function nextTurn() {
+    if (!currentRoomId) return;
+    // 現在の状態を再取得（念のため）
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    const snap = await getDoc(roomRef);
+    if(!snap.exists()) return;
+    const data = snap.data();
+    
+    // オンラインプレイヤーから次の出題者を探す
+    const onlinePlayers = data.players.filter(p => p.isOnline);
     if (onlinePlayers.length === 0) return;
 
-    let currentIndex = onlinePlayers.findIndex(p => p.uid === currentRoomData.currentDrawerUid);
-    // 見つからない場合は -1 なので +1 して 0 (最初の人) になる
+    let currentIndex = onlinePlayers.findIndex(p => p.uid === data.currentDrawerUid);
     let nextIndex = (currentIndex + 1) % onlinePlayers.length;
     const nextDrawer = onlinePlayers[nextIndex];
     const word = getRandomWord();
 
-    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
     await updateDoc(roomRef, {
+        status: "playing", // ここで playing に戻す
         currentDrawerUid: nextDrawer.uid,
         currentWord: word,
         startTime: serverTimestamp(),
@@ -498,10 +528,8 @@ async function sendChat() {
         currentRoomData.currentDrawerUid !== currentUser.uid && 
         text === currentRoomData.currentWord) {
         
-        // 正解処理: まず正解者の発言をチャットに流す（ネタバレOK、だって正解だから）
-        // isCorrect フラグをつけて特別表示する
+        // 先にチャット送信（正解コメント）
         input.value = '';
-        
         await updateDoc(roomRef, {
             messages: arrayUnion({
                 user: name,
@@ -511,8 +539,8 @@ async function sendChat() {
             })
         });
 
-        // その後、点数計算とシステムアナウンス
-        handleCorrectAnswer(name);
+        // ★正解処理（トランザクション）へ
+        handleCorrectAnswer(name, currentUser.uid);
         return;
     }
 
@@ -541,8 +569,9 @@ function addChatMessage(msg, flowEnabled) {
         }
 
         // 正解時の画像表示トリガー
-        if (msg.isAnswer && currentRoomData.settings.showImageResult) {
-            showImageModal(currentRoomData.currentWord, 'result');
+        if (flowEnabled && msg.isAnswer && currentRoomData.settings.showImageResult) {
+            const targetWord = msg.word || currentRoomData.currentWord;
+            showImageModal(targetWord, 'result');
         }
 
     } else {
