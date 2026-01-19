@@ -4,6 +4,9 @@ import {
     getFirestore, collection, doc, getDoc, setDoc, updateDoc, onSnapshot, 
     arrayUnion, serverTimestamp, increment, deleteDoc, runTransaction 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { 
+    getDatabase, ref, set, push, onValue, remove, child, update 
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
 // 1. Firebase Config (プレースホルダー)
 const firebaseConfig = {
@@ -18,7 +21,9 @@ const firebaseConfig = {
 // アプリ初期化
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+
 const db = getFirestore(app);
+const rtdb = getDatabase(app);
 
 // 定数・状態変数
 const DICT_URL = "https://raw.githubusercontent.com/Omezi42/AnokoroImageFolder/main/all_card_names.txt";
@@ -190,7 +195,7 @@ async function joinRoom() {
                 currentDrawerUid: null,
                 currentWord: null,
                 startTime: null,
-                canvasData: [],
+                canvasData: [], // Firestoreでは使わないが互換性のため残すか、削除しても良い
                 messages: [],
                 settings: settings
             });
@@ -214,6 +219,7 @@ async function joinRoom() {
                     messages: [],
                     settings: settings
                 });
+
             } else {
                 const existingPlayerIndex = data.players.findIndex(p => p.uid === currentUser.uid);
                 let newPlayers = [...data.players];
@@ -243,12 +249,21 @@ async function joinRoom() {
             document.getElementById('search-column').classList.remove('hidden');
         }
 
-        subscribeToRoom(roomId);
+        // RTDBのキャンバスデータを監視
+        subscribeToCanvas(roomId);
 
     } catch (e) {
         console.error(e);
         alert("ルームへの参加に失敗しました: " + e.message);
     }
+}
+
+function subscribeToCanvas(roomId) {
+    const canvasRef = ref(rtdb, `rooms/${roomId}/canvas`);
+    onValue(canvasRef, (snapshot) => {
+        const data = snapshot.val();
+        redrawCanvas(data); // dataはオブジェクトIDをキーにした連想配列の可能性があるため、redrawCanvasで調整必要
+    });
 }
 
 function subscribeToRoom(roomId) {
@@ -339,11 +354,11 @@ function updateGameUI(data, prevData) {
         checkDrawerStatus(data);
     }
 
-    // キャンバス同期
-    const prevLen = prevData ? prevData.canvasData.length : 0;
-    if (data.canvasData.length !== prevLen || !prevData) {
-        redrawCanvas(data.canvasData);
-    }
+    // キャンバス同期 (Firestore版は廃止のため削除)
+    // const prevLen = prevData ? prevData.canvasData.length : 0;
+    // if (data.canvasData.length !== prevLen || !prevData) {
+    //     redrawCanvas(data.canvasData);
+    // }
 
     // チャット同期
     const prevMsgLen = prevData ? prevData.messages.length : 0;
@@ -396,13 +411,17 @@ async function startGame() {
         currentDrawerUid: currentUser.uid,
         currentWord: word,
         startTime: serverTimestamp(),
-        canvasData: [],
+        // canvasData: [],
         messages: arrayUnion({
             user: "SYSTEM",
             text: "ゲームが開始されました！",
             timestamp: Date.now()
         })
     });
+
+    // RTDBのキャンバスをクリア
+    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
+    await remove(canvasRef);
 }
 
 async function passTurn() {
@@ -411,13 +430,17 @@ async function passTurn() {
     const roomRef = doc(db, "pictsenseRooms", currentRoomId);
     await updateDoc(roomRef, {
         currentWord: word,
-        canvasData: [],
+        // canvasData: [], // Firestore更新不要
         messages: arrayUnion({
             user: "SYSTEM",
             text: "お題がパスされました。",
             timestamp: Date.now()
         })
     });
+
+    // RTDBのキャンバスをクリア
+    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
+    await remove(canvasRef);
 }
 
 // ★修正ポイント: トランザクションを使って排他制御を行う
@@ -496,13 +519,17 @@ async function nextTurn() {
         currentDrawerUid: nextDrawer.uid,
         currentWord: word,
         startTime: serverTimestamp(),
-        canvasData: [],
+        // canvasData: [],
         messages: arrayUnion({
             user: "SYSTEM",
             text: `次は ${nextDrawer.name} さんの番です！`,
             timestamp: Date.now()
         })
     });
+
+    // RTDBのキャンバスをクリア
+    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
+    await remove(canvasRef);
 }
 
 function getRandomWord() {
@@ -732,33 +759,47 @@ async function sendStrokeBuffer() {
         points: pointsToSend
     };
 
+    // RTDBにPush
+    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
+    // push() はユニークなIDを生成してデータを追加する
+    push(canvasRef, strokeData)
+        .catch(err => console.error("Draw sync error", err));
+
+    // Firestoreへの書き込みは廃止
+    /*
     const roomRef = doc(db, "pictsenseRooms", currentRoomId);
     await updateDoc(roomRef, {
         canvasData: arrayUnion(strokeData)
     }).catch(err => console.error("Draw sync error", err));
+    */
 }
 
 async function clearCanvasRemotely() {
     if (!currentRoomId) return;
-    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
-    await updateDoc(roomRef, { canvasData: [] });
+    // RTDBクリア
+    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
+    await remove(canvasRef);
 }
 
-function redrawCanvas(canvasData) {
+function redrawCanvas(canvasDataVal) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    if (!canvasData) return;
+    if (!canvasDataVal) return;
 
-    canvasData.forEach(stroke => {
+    // RTDBから取得したデータは { key1: {color...}, key2: {color...} } のオブジェクト形式
+    // values をとって配列にする
+    const strokes = Object.values(canvasDataVal);
+
+    strokes.forEach(stroke => {
         ctx.beginPath();
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.strokeStyle = stroke.color;
         ctx.lineWidth = stroke.size;
 
-        if (stroke.points.length > 0) {
+        if (stroke.points && stroke.points.length > 0) {
             ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
             for (let i = 1; i < stroke.points.length; i++) {
                 ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
