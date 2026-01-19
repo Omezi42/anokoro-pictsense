@@ -4,9 +4,6 @@ import {
     getFirestore, collection, doc, getDoc, setDoc, updateDoc, onSnapshot, 
     arrayUnion, serverTimestamp, increment, deleteDoc, runTransaction 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import { 
-    getDatabase, ref, set, push, onValue, remove, child, update 
-} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
 // 1. Firebase Config (プレースホルダー)
 const firebaseConfig = {
@@ -23,7 +20,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
 const db = getFirestore(app);
-const rtdb = getDatabase(app);
 
 // 定数・状態変数
 const DICT_URL = "https://raw.githubusercontent.com/Omezi42/AnokoroImageFolder/main/all_card_names.txt";
@@ -195,7 +191,7 @@ async function joinRoom() {
                 currentDrawerUid: null,
                 currentWord: null,
                 startTime: null,
-                canvasData: [], // Firestoreでは使わないが互換性のため残すか、削除しても良い
+                canvasData: [],
                 messages: [],
                 settings: settings
             });
@@ -236,6 +232,16 @@ async function joinRoom() {
                         isCreator: false
                     });
                 }
+                // セルフヒーリング: オンラインのCreatorがいなければ自分がなる
+                const hasOnlineCreator = newPlayers.some(p => p.isOnline && p.isCreator);
+                if (!hasOnlineCreator) {
+                    const myIdx = newPlayers.findIndex(p => p.uid === currentUser.uid);
+                    if (myIdx >= 0) {
+                        newPlayers[myIdx].isCreator = true;
+                        console.log("Became creator due to missing online creator.");
+                    }
+                }
+                
                 await updateDoc(roomRef, { players: newPlayers });
             }
         }
@@ -249,8 +255,8 @@ async function joinRoom() {
             document.getElementById('search-column').classList.remove('hidden');
         }
 
-        // RTDBのキャンバスデータを監視
-        subscribeToCanvas(roomId);
+        // FirestoreのRealtimeリスナー登録
+        subscribeToRoom(roomId);
 
     } catch (e) {
         console.error(e);
@@ -258,13 +264,7 @@ async function joinRoom() {
     }
 }
 
-function subscribeToCanvas(roomId) {
-    const canvasRef = ref(rtdb, `rooms/${roomId}/canvas`);
-    onValue(canvasRef, (snapshot) => {
-        const data = snapshot.val();
-        redrawCanvas(data); // dataはオブジェクトIDをキーにした連想配列の可能性があるため、redrawCanvasで調整必要
-    });
-}
+
 
 function subscribeToRoom(roomId) {
     const roomRef = doc(db, "pictsenseRooms", roomId);
@@ -354,11 +354,11 @@ function updateGameUI(data, prevData) {
         checkDrawerStatus(data);
     }
 
-    // キャンバス同期 (Firestore版は廃止のため削除)
-    // const prevLen = prevData ? prevData.canvasData.length : 0;
-    // if (data.canvasData.length !== prevLen || !prevData) {
-    //     redrawCanvas(data.canvasData);
-    // }
+    // キャンバス同期
+    const prevLen = prevData ? prevData.canvasData.length : 0;
+    if (data.canvasData.length !== prevLen || !prevData) {
+        redrawCanvas(data.canvasData);
+    }
 
     // チャット同期
     const prevMsgLen = prevData ? prevData.messages.length : 0;
@@ -411,17 +411,13 @@ async function startGame() {
         currentDrawerUid: currentUser.uid,
         currentWord: word,
         startTime: serverTimestamp(),
-        // canvasData: [],
+        canvasData: [],
         messages: arrayUnion({
             user: "SYSTEM",
             text: "ゲームが開始されました！",
             timestamp: Date.now()
         })
     });
-
-    // RTDBのキャンバスをクリア
-    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
-    await remove(canvasRef);
 }
 
 async function passTurn() {
@@ -430,17 +426,13 @@ async function passTurn() {
     const roomRef = doc(db, "pictsenseRooms", currentRoomId);
     await updateDoc(roomRef, {
         currentWord: word,
-        // canvasData: [], // Firestore更新不要
+        canvasData: [],
         messages: arrayUnion({
             user: "SYSTEM",
             text: "お題がパスされました。",
             timestamp: Date.now()
         })
     });
-
-    // RTDBのキャンバスをクリア
-    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
-    await remove(canvasRef);
 }
 
 // ★修正ポイント: トランザクションを使って排他制御を行う
@@ -519,17 +511,17 @@ async function nextTurn() {
         currentDrawerUid: nextDrawer.uid,
         currentWord: word,
         startTime: serverTimestamp(),
-        // canvasData: [],
+        status: "playing", // ここで playing に戻す
+        currentDrawerUid: nextDrawer.uid,
+        currentWord: word,
+        startTime: serverTimestamp(),
+        canvasData: [],
         messages: arrayUnion({
             user: "SYSTEM",
             text: `次は ${nextDrawer.name} さんの番です！`,
             timestamp: Date.now()
         })
     });
-
-    // RTDBのキャンバスをクリア
-    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
-    await remove(canvasRef);
 }
 
 function getRandomWord() {
@@ -545,6 +537,7 @@ async function sendChat() {
     const text = input.value.trim();
     if (!text) return;
     if (!currentRoomId) return;
+    if (!currentRoomData) return;
 
     const roomRef = doc(db, "pictsenseRooms", currentRoomId);
     const me = currentRoomData.players.find(p => p.uid === currentUser.uid);
@@ -723,9 +716,12 @@ function startDrawing(e) {
     isDrawing = true;
     lastPoint = getPos(e);
     strokeBuffer = [lastPoint]; 
+    // 定期送信 (setInterval) は廃止
+    /*
     if (!sendTimer) {
         sendTimer = setInterval(sendStrokeBuffer, 100);
     }
+    */
 }
 
 function draw(e) {
@@ -739,11 +735,16 @@ function draw(e) {
 function stopDrawing() {
     if (!isDrawing) return;
     isDrawing = false;
+    // 描き終わりで送信
     sendStrokeBuffer();
+    
+    // Timer停止不要
+    /*
     if (sendTimer) {
         clearInterval(sendTimer);
         sendTimer = null;
     }
+    */
 }
 
 async function sendStrokeBuffer() {
@@ -759,40 +760,27 @@ async function sendStrokeBuffer() {
         points: pointsToSend
     };
 
-    // RTDBにPush
-    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
-    // push() はユニークなIDを生成してデータを追加する
-    push(canvasRef, strokeData)
-        .catch(err => console.error("Draw sync error", err));
-
-    // Firestoreへの書き込みは廃止
-    /*
+    // Firestoreへ書き込み (stroke単位)
     const roomRef = doc(db, "pictsenseRooms", currentRoomId);
     await updateDoc(roomRef, {
         canvasData: arrayUnion(strokeData)
     }).catch(err => console.error("Draw sync error", err));
-    */
 }
 
 async function clearCanvasRemotely() {
     if (!currentRoomId) return;
-    // RTDBクリア
-    const canvasRef = ref(rtdb, `rooms/${currentRoomId}/canvas`);
-    await remove(canvasRef);
+    const roomRef = doc(db, "pictsenseRooms", currentRoomId);
+    await updateDoc(roomRef, { canvasData: [] });
 }
 
-function redrawCanvas(canvasDataVal) {
+function redrawCanvas(canvasData) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    if (!canvasDataVal) return;
+    if (!canvasData) return;
 
-    // RTDBから取得したデータは { key1: {color...}, key2: {color...} } のオブジェクト形式
-    // values をとって配列にする
-    const strokes = Object.values(canvasDataVal);
-
-    strokes.forEach(stroke => {
+    canvasData.forEach(stroke => {
         ctx.beginPath();
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
